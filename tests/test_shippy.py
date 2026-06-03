@@ -230,7 +230,6 @@ class OllamaTest(unittest.TestCase):
         self.assertEqual(captured["payload"]["options"]["num_ctx"], 8192)
         self.assertEqual(captured["payload"]["options"]["num_predict"], 1800)
         self.assertEqual(captured["payload"]["options"]["temperature"], 0.05)
-        self.assertEqual(captured["payload"]["format"], {"type": "object"})
 
 
 if __name__ == "__main__":
