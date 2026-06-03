@@ -1,0 +1,90 @@
+model = "gemma4:e4b"
+ollama_url = "http://localhost:11434"
+
+# Paths excluded from both summary and review context.
+ignores = [
+  "**/go.sum",
+  "**/package-lock.json",
+  "**/pnpm-lock.yaml",
+  "**/yarn.lock",
+  "**/dist/**",
+  "**/build/**",
+  "**/.next/**",
+  "**/coverage/**",
+  "**/*.tsbuildinfo",
+  "**/*gen*",
+]
+
+[summary]
+# Each split group is a bundle of changed files, usually by top folder.
+# Shippy summarizes groups in parallel, then asks for one final PR body/title.
+
+# Provider context per model call. Keep this aligned with the model context window.
+context_window = 8192
+
+# Max diff characters sent to each split-group worker.
+# 16k chars is roughly a few thousand tokens, leaving room for prompt and output.
+max_group_chars = 16000
+
+# Upper bound on parallel chunks. Big PRs may merge smaller chunks into one mixed group.
+max_groups = 12
+
+# Parallel provider calls. Lower this if the machine, model, or API gets overloaded.
+workers = 4
+
+# Lower = more deterministic. Summary can be slightly more flexible than review.
+temperature = 0.1
+timeout_seconds = 420
+
+[review]
+# Review uses the same split-group method as summary:
+# 1. split changed files into groups
+# 2. review each group in parallel
+# 3. merge group findings into one sticky GitHub review comment
+
+# Provider context per model call. Same model, same window.
+context_window = 8192
+
+# Review needs enough diff per worker, but not so much that findings lose focus.
+max_group_chars = 16000
+max_groups = 12
+workers = 4
+
+# Review should be stricter and less creative.
+temperature = 0.05
+timeout_seconds = 420
+
+[title]
+# Set update = false to leave the current PR title untouched.
+update = true
+# Set enforce_prefix = false to allow any generated title format.
+enforce_prefix = true
+prefixes = ["feat:", "task:", "fix:", "hotfix:", "chore:", "docs:", "refactor:"]
+
+[prompts]
+# Optional. Leave empty to use Shippy defaults.
+# Setting a value replaces only that prompt.
+#
+# split_group means "prompt for one chunk of changed files".
+# Summary and review have separate split_group prompts because they produce different outputs.
+#
+# Available tokens:
+# summary_split_group: {{area}}, {{branch}}, {{base}}, {{ignored_paths}}, {{files}}, {{diff}}
+# summary_final: {{branch}}, {{base}}, {{commits}}, {{stat}}, {{area_summaries}}, {{title_prefixes}}, {{title_update}}, {{title_enforce_prefix}}
+# review_split_group: {{area}}, {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{files}}, {{diff}}, {{trim_note}}
+# review_final: {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{changed_files}}, {{diff}}, {{area_reviews}}, {{trim_note}}
+summary_split_group = ""
+summary_final = ""
+review_split_group = ""
+review_final = ""
+
+[extra_instructions]
+# Optional. Appended to the default prompt, or to a custom prompt above.
+summary_split_group = """
+"""
+summary_final = """
+"""
+review_split_group = """
+"""
+review_final = """
+"""

@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shippy-ai"
+version = "0.1.0"
+description = "AI-powered pull request summaries and reviews."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Shippy contributors" }]
+dependencies = []
+keywords = ["github", "pull-request", "ollama", "code-review", "ai"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Code Generators",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.scripts]
+shippy = "shippy.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["shippy*"]
+
+[tool.setuptools.package-data]
+shippy = ["py.typed", "templates/.shippy.toml"]
+
+[project.urls]
+Homepage = "https://github.com/balaganworks/shippy"
+Repository = "https://github.com/balaganworks/shippy"
+Issues = "https://github.com/balaganworks/shippy/issues"
+
+[dependency-groups]
+dev = ["build>=1.2", "ruff>=0.13.0"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+  "B",
+  "C4",
+  "E",
+  "F",
+  "I",
+  "SIM",
+  "UP",
+  "W",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["shippy"]

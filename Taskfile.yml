@@ -1,0 +1,89 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  prereq:
+    desc: Check required local tools
+    cmds:
+      - uv --version
+      - git --version
+      - gh --version
+      - ollama --version
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - uv run -m unittest discover -s tests
+
+  lint:
+    desc: Run Ruff lint checks
+    cmds:
+      - uv run ruff check .
+
+  format:
+    desc: Format Python with Ruff
+    cmds:
+      - uv run ruff format .
+
+  format:check:
+    desc: Check Python formatting
+    cmds:
+      - uv run ruff format --check .
+
+  build:
+    desc: Build package artifacts
+    cmds:
+      - uv run -m build
+
+  clean:
+    desc: Remove generated Python build files
+    cmds:
+      - find . -path './.venv' -prune -o \( -name 'build' -o -name 'dist' -o -name '*.egg-info' -o -name '__pycache__' \) -prune -exec rm -rf {} +
+
+  check:
+    desc: Format-check, lint, test, build, then clean
+    cmds:
+      - task: format:check
+      - task: lint
+      - task: test
+      - task: build
+      - task: clean
+
+  publish:check:
+    desc: Run release checks
+    cmds:
+      - task: format:check
+      - task: lint
+      - task: test
+      - task: build
+
+  pr:create:
+    desc: Create current branch PR as draft if not exist yet.
+    cmds:
+      - gh pr create --draft --fill
+
+  pr:summary:
+    desc: Generate current branch PR title and description with Shippy
+    cmds:
+      - uv run -m shippy.cli summary
+
+  pr:review:
+    desc: Run Shippy review against the current branch PR
+    cmds:
+      - uv run -m shippy.cli review
+
+  pr:
+    desc: Create or reuse draft PR, then summarize and review it
+    cmds:
+      - task: pr:create
+      - task: pr:summary
+      - task: pr:review
+
+  pr:ready:
+    desc: Mark current branch PR ready for review
+    cmds:
+      - gh pr ready
