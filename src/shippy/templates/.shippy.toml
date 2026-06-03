@@ -20,11 +20,11 @@ ignores = [
 # Shippy summarizes groups in parallel, then asks for one final PR body/title.
 
 # Ollama context per model call. Keep this aligned with the model context window.
-context_window = 8192
+context_window = 16384
 
 # Max diff characters sent to each split-group worker.
-# 16k chars is roughly a few thousand tokens, leaving room for prompt and output.
-max_group_chars = 16000
+# Shippy first tries the whole PR in one worker. It splits only when this cap is exceeded.
+max_group_chars = 32000
 
 # Upper bound on parallel chunks. Big PRs may merge smaller chunks into one mixed group.
 max_groups = 12
@@ -43,10 +43,10 @@ timeout_seconds = 420
 # 3. merge group findings into one sticky GitHub review comment
 
 # Provider context per model call. Same model, same window.
-context_window = 8192
+context_window = 16384
 
-# Review needs enough diff per worker, but not so much that findings lose focus.
-max_group_chars = 16000
+# Shippy first tries the whole PR in one worker. It splits only when this cap is exceeded.
+max_group_chars = 32000
 max_groups = 12
 workers = 4
 

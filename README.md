@@ -121,16 +121,16 @@ ignores = [
 ]
 
 [summary]
-context_window = 8192
-max_group_chars = 16000
+context_window = 16384
+max_group_chars = 32000
 max_groups = 12
 workers = 4
 temperature = 0.1
 timeout_seconds = 420
 
 [review]
-context_window = 8192
-max_group_chars = 16000
+context_window = 16384
+max_group_chars = 32000
 max_groups = 12
 workers = 4
 temperature = 0.05
@@ -151,9 +151,10 @@ review_final = ""
 ### 🧠 Context And Limits
 
 - `context_window` is provider context per model call.
-- `max_group_chars` is a diff safety cap for each split-group worker.
+- Shippy tries to send the whole PR to one worker first.
+- `max_group_chars` is the diff size cap before Shippy splits into groups.
 - `max_group_chars` is measured in characters, not tokens.
-- `16000` diff chars is roughly a few thousand tokens for code.
+- `32000` diff chars is roughly several thousand tokens for code.
 - Output caps default to `1024` tokens for split-group workers and `2048` tokens
   for final synthesis.
 
@@ -164,6 +165,8 @@ Override output caps only when the model needs longer answers:
 split_group_output_tokens = 1024
 final_output_tokens = 2048
 ```
+
+See the full editable config template here: [`src/shippy/templates/.shippy.toml`](src/shippy/templates/.shippy.toml).
 
 ### 🧩 Prompt Overrides
 
@@ -203,19 +206,8 @@ shippy --help
 ### Verdict
 ✅ Pass: no blocking issue visible.
 
-### Summary
-- Adds PR review through the configured AI platform.
-- Splits changed files into focused review groups.
-- Publishes one sticky Markdown comment on GitHub.
-
-### Findings
-- No blocking issues found in the visible diff.
-
 ### Tests
 - Unit tests were not visible in PR context.
-
-### Reviewer Notes
-- Diff was complete.
 ```
 
 ---

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from math import ceil
@@ -17,7 +17,7 @@ from shippy.prompts import append_extra_instructions, render_prompt
 @dataclass(frozen=True)
 class WorkGroup:
     name: str
-    paths: list[str]
+    paths: Sequence[str]
     diff: str
     trimmed: bool
 
@@ -29,7 +29,7 @@ class WorkContext:
     commits: str
     stat: str
     ignores: list[str]
-    groups: list[WorkGroup]
+    groups: Sequence[WorkGroup]
     name_status: str = ""
 
 
@@ -71,6 +71,29 @@ def collect_work_context(
     name_status = runner(
         ["git", "diff", "--name-status", commit_range, "--", *pathspec], repo_root, True
     )
+    full_diff = runner(
+        ["git", "diff", f"--unified={unified}", commit_range, "--", *pathspec],
+        repo_root,
+        True,
+    )
+    if len(full_diff) <= max_group_chars:
+        return WorkContext(
+            base=base,
+            branch=branch,
+            commits=commits,
+            stat=stat,
+            name_status=name_status,
+            ignores=ignores,
+            groups=[
+                WorkGroup(
+                    name="all changes",
+                    paths=[path for _, path in parse_name_status(name_status)],
+                    diff=full_diff,
+                    trimmed=False,
+                )
+            ],
+        )
+
     groups = []
     for name, paths in split_groups(parse_name_status(name_status), max_groups):
         diff_paths = paths or pathspec
@@ -81,7 +104,8 @@ def collect_work_context(
         )
         trimmed = len(diff) > max_group_chars
         if trimmed:
-            diff = diff[:max_group_chars] + f"\n\n{truncation_marker}\n"
+            suffix = f"\n\n{truncation_marker}\n" if truncation_marker else ""
+            diff = diff[:max_group_chars] + suffix
         groups.append(WorkGroup(name=name, paths=paths, diff=diff, trimmed=trimmed))
 
     return WorkContext(
@@ -144,7 +168,7 @@ def split_groups(files: list[tuple[str, str]], max_groups: int) -> list[tuple[st
     return sorted(keep)
 
 
-def run_workers(items: list[WorkGroup], workers: int, job: Callable[[WorkGroup], T]) -> list[T]:
+def run_workers(items: Sequence[WorkGroup], workers: int, job: Callable[[WorkGroup], T]) -> list[T]:
     if workers < 1:
         raise ValueError("workers must be greater than 0")
     results = []
@@ -155,7 +179,7 @@ def run_workers(items: list[WorkGroup], workers: int, job: Callable[[WorkGroup],
     return results
 
 
-def bullet_list(values: list[str]) -> str:
+def bullet_list(values: Sequence[str]) -> str:
     return "\n".join(f"- {value}" for value in values)
 
 

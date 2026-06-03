@@ -20,6 +20,21 @@ class OllamaOptions:
     format: dict[str, object] | None = None
 
 
+@dataclass(frozen=True)
+class GenerateResult:
+    text: str
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+
+    def usage_text(self) -> str:
+        parts = []
+        if self.prompt_tokens is not None:
+            parts.append(f"input {self.prompt_tokens}")
+        if self.output_tokens is not None:
+            parts.append(f"output {self.output_tokens}")
+        return ", ".join(parts)
+
+
 class OllamaClient:
     def __init__(self, api_base: str, model: str) -> None:
         self.api_base = api_base.rstrip("/")
@@ -43,6 +58,9 @@ class OllamaClient:
             )
 
     def generate(self, prompt: str, options: OllamaOptions) -> str:
+        return self.generate_with_stats(prompt, options).text
+
+    def generate_with_stats(self, prompt: str, options: OllamaOptions) -> GenerateResult:
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -67,4 +85,14 @@ class OllamaClient:
         except urllib.error.URLError as error:
             raise OllamaError(f"Ollama request failed: {error}") from error
 
-        return str(data["response"]).strip()
+        return GenerateResult(
+            text=str(data["response"]).strip(),
+            prompt_tokens=_int_or_none(data.get("prompt_eval_count")),
+            output_tokens=_int_or_none(data.get("eval_count")),
+        )
+
+
+def _int_or_none(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)

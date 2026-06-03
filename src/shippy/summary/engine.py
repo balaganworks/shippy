@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,7 +38,7 @@ class SummaryGroup(WorkGroup):
 
 @dataclass(frozen=True)
 class SummaryContext(WorkContext):
-    groups: list[SummaryGroup]
+    groups: Sequence[SummaryGroup]
 
 
 def summarize_pull_request(repo_root: Path, pr_url: str | None, config: SummaryConfig) -> None:
@@ -46,10 +47,11 @@ def summarize_pull_request(repo_root: Path, pr_url: str | None, config: SummaryC
     ollama.assert_model_available()
 
     url = pr_url or github.current_branch_pull_request_url()
-    say("Collecting PR summary context...")
+    say("🧭 Collecting PR summary context...")
     context = collect_summary_context(repo_root, config)
     summaries = summarize_groups(ollama, context, config)
-    final = ollama.generate(
+    say(f"📝 Asking {config.model} for final markdown summary...")
+    final = ollama.generate_with_stats(
         prompt=build_final_prompt(
             context,
             summaries,
@@ -65,9 +67,12 @@ def summarize_pull_request(repo_root: Path, pr_url: str | None, config: SummaryC
             format=None,
         ),
     )
-    result = parse_summary_result(final, config.title)
+    usage = final.usage_text()
+    if usage:
+        say(f"📊 Final summary tokens: {usage}")
+    result = parse_summary_result(final.text, config.title)
     edit_pr(repo_root, url, result.get("title"), result["body"])
-    say("Updated PR title/body")
+    say("✅ Updated PR title/body")
 
 
 def collect_summary_context(repo_root: Path, config: SummaryConfig) -> SummaryContext:
@@ -84,7 +89,10 @@ def collect_summary_context(repo_root: Path, config: SummaryConfig) -> SummaryCo
         SummaryGroup(group.name, group.paths, group.diff, group.trimmed) for group in context.groups
     ]
     file_count = len(parse_name_status(context.name_status))
-    say(f"Context ready: {file_count} files across {len(groups)} groups")
+    step = "final summary" if len(groups) == 1 else "group summaries"
+    trimmed = sum(group.trimmed for group in groups)
+    suffix = f", {trimmed} truncated" if trimmed else ""
+    say(f"📦 Context ready: {file_count} files, proceeding to {step}{suffix}")
     return SummaryContext(
         base=context.base,
         branch=context.branch,
@@ -101,10 +109,14 @@ def summarize_groups(
     context: SummaryContext,
     config: SummaryConfig,
 ) -> list[str]:
-    say(f"Summarizing {len(context.groups)} groups with {config.workers} workers...")
+    if len(context.groups) == 1:
+        say("➡️  Single summary group — skipping parallel summaries")
+        return []
+
+    say(f"🧩 Summarizing {len(context.groups)} groups with {config.workers} workers...")
 
     def summarize(group: SummaryGroup) -> str:
-        output = ollama.generate(
+        output = ollama.generate_with_stats(
             build_group_prompt(
                 context,
                 group,
@@ -119,7 +131,10 @@ def summarize_groups(
                 format=None,
             ),
         )
-        return group_summary_text(output, group.name)
+        usage = output.usage_text()
+        if usage:
+            say(f"📊 Summary group {group.name}: {usage}")
+        return group_summary_text(output.text, group.name)
 
     summaries = run_workers(context.groups, config.workers, summarize)
     summaries.sort()

@@ -37,7 +37,7 @@ class ReviewTest(unittest.TestCase):
 
         self.assertEqual(
             prompt,
-            "custom feat: x M\tfile.py Diff was complete.\n\n"
+            "custom feat: x M\tfile.py Use the available review notes and diff context.\n\n"
             "Extra instructions:\nextra review rule\n",
         )
 
@@ -55,9 +55,10 @@ class ReviewTest(unittest.TestCase):
 
         prompt = build_review_prompt(context, pr)
 
-        self.assertIn("Diff was truncated", prompt)
+        self.assertIn("Some diff context was truncated", prompt)
         self.assertIn("PR title: feat: x", prompt)
         self.assertIn("Changed files:\nM\tfile.py", prompt)
+        self.assertIn("Diff:\ndiff --git a/file.py b/file.py", prompt)
 
     def test_normalize_review_strips_outer_fence(self) -> None:
         review = normalize_review(

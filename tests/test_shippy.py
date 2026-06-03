@@ -198,7 +198,9 @@ class OllamaTest(unittest.TestCase):
                 return None
 
             def read(self) -> bytes:
-                return json.dumps({"response": "ok"}).encode()
+                return json.dumps(
+                    {"response": "ok", "prompt_eval_count": 12, "eval_count": 3}
+                ).encode()
 
         def fake_urlopen(request: object, timeout: int) -> Response:
             request_data = request.data
@@ -210,7 +212,7 @@ class OllamaTest(unittest.TestCase):
         client = OllamaClient("http://localhost:11434", "gemma4:e4b")
 
         with patch("urllib.request.urlopen", fake_urlopen):
-            result = client.generate(
+            result = client.generate_with_stats(
                 "prompt",
                 OllamaOptions(
                     num_ctx=8192,
@@ -221,7 +223,8 @@ class OllamaTest(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(result, "ok")
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(result.usage_text(), "input 12, output 3")
         self.assertEqual(captured["url"], "http://localhost:11434/api/generate")
         self.assertEqual(captured["timeout"], 420)
         self.assertEqual(captured["payload"]["prompt"], "prompt")
