@@ -70,7 +70,7 @@ prefixes = ["feat:", "task:", "fix:", "hotfix:", "chore:", "docs:", "refactor:"]
 #
 # Available tokens:
 # summary_split_group: {{area}}, {{branch}}, {{base}}, {{ignored_paths}}, {{files}}, {{diff}}
-# summary_final: {{branch}}, {{base}}, {{commits}}, {{stat}}, {{area_summaries}}, {{title_prefixes}}, {{title_update}}, {{title_enforce_prefix}}
+# summary_final: {{branch}}, {{base}}, {{commits}}, {{stat}}, {{area_summaries}}, {{title_prefixes}}, {{title_update}}, {{title_enforce_prefix}}, {{title_shape}}, {{title_rules}}
 # review_split_group: {{area}}, {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{files}}, {{diff}}, {{trim_note}}
 # review_final: {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{changed_files}}, {{diff}}, {{area_reviews}}, {{trim_note}}
 summary_split_group = ""

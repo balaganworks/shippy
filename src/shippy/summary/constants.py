@@ -4,46 +4,31 @@ from __future__ import annotations
 
 DEFAULT_TITLE_PREFIXES = ["feat:", "task:", "fix:", "hotfix:", "chore:", "docs:", "refactor:"]
 
-GROUP_SUMMARY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "area": {"type": "string"},
-        "summary": {"type": "string"},
-        "important_changes": {"type": "array", "items": {"type": "string"}},
-        "significant_files": {"type": "array", "items": {"type": "string"}},
-        "validation_signals": {"type": "array", "items": {"type": "string"}},
-        "risk_signals": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": [
-        "area",
-        "summary",
-        "important_changes",
-        "significant_files",
-        "validation_signals",
-        "risk_signals",
-    ],
-}
-
 DEFAULT_GROUP_PROMPT_TEMPLATE = """Summarize one area of a GitHub PR.
 
-Return one JSON object with this shape:
-{
-  "area": "{{area}}",
-  "summary": "one sentence, 18 words max",
-  "important_changes": ["2-4 concise bullets max"],
-  "significant_files": ["up to 4 important changed paths with why they matter"],
-  "validation_signals": ["only checks visible in the diff"],
-  "risk_signals": ["only meaningful risks visible in this area"]
-}
+Return plain text notes only. These notes are internal context for the final PR description.
+
+Use this loose note shape:
+Area: {{area}}
+Summary: one sentence, 18 words max
+Important changes:
+- 2-4 concise bullets max
+Significant files:
+- up to 4 changed paths with why they matter
+Validation signals:
+- only checks visible in the diff
+Risk signals:
+- only meaningful risks visible in this area
 
 Rules:
 - Be specific to this area.
-- Return JSON only. No Markdown fences. No prose before or after JSON.
-- Do not invent tests, rollout, production impact, or validation.
+- Mention tests, rollout, production impact, or validation only when visible in the diff.
 - Prefer implemented behavior, contracts, data shape, migrations, and workflows over file lists.
-- Write in past tense. Explain what changed, not tasks still to do.
-- If a list has no real items, return an empty list.
+- Write in past tense. Focus on changed behavior.
+- If a section has no real items, omit it.
 - Be concise but detailed enough that a reviewer can route attention.
+- Use short bullets.
+- Include meaningful risks only when visible.
 
 PR branch: {{branch}}
 Base branch: {{base}}
@@ -58,35 +43,37 @@ Area diff:
 {{diff}}
 """
 
-DEFAULT_FINAL_PROMPT_TEMPLATE = """Write final GitHub PR metadata from area summaries.
+DEFAULT_FINAL_PROMPT_TEMPLATE = """Write final GitHub PR metadata from the source context below.
 
 Return this exact plain-text shape:
 {{title_shape}}BODY:
 ## Summary
-...
+- 2-4 one-line bullets
 
 Important:
-- If TITLE is requested, the first non-empty line must start with TITLE:.
+- Return plain Markdown text.
+- Follow the output shape exactly.
 - After BODY:, write the full PR description Markdown.
-- Keep Summary to 2-4 bullets, one line each.
-- Use this section order when supported:
+- Every section heading must be level 2 Markdown: `## Heading`.
+- Use only these sections, in this order when useful:
   Summary, Key Changes, Significant Files, Validation, Risk, Reviewer Notes, Deep Dive.
-- Do not add empty, generic, or ceremonial sections.
-- Write in past tense. Explain implemented changes, not tasks still to do.
-- Validation must mention only actual validation signals from summaries.
-- Do not include unchecked task lists.
-- Avoid "None", "N/A", "Unknown", "Pending", or "TBD" filler.
+- Include sections only when they have real content.
+- Keep Summary to 2-4 bullets, one line each.
+- All section content must be Markdown bullets.
+- Write in past tense. Focus on implemented changes.
+- Use concrete content instead of filler like "None", "N/A", "Unknown", "Pending", or "TBD".
+- Keep each fact in the most relevant section.
+- Use simple flat bullets.
 {{title_rules}}
 
-PR branch: {{branch}}
-Base branch: {{base}}
+Input data for writing the PR body:
 
-Commits:
+Commit messages from this branch:
 {{commits}}
 
-Diff stat:
+Changed files summary from git diff stat:
 {{stat}}
 
-Area summaries:
+Grouped summaries from the earlier summary step:
 {{area_summaries}}
 """

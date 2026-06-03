@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +15,6 @@ from shippy.summary.constants import (
     DEFAULT_FINAL_PROMPT_TEMPLATE,
     DEFAULT_GROUP_PROMPT_TEMPLATE,
     DEFAULT_TITLE_PREFIXES,
-    GROUP_SUMMARY_SCHEMA,
 )
 from shippy.workflow import (
     WorkContext,
@@ -118,11 +116,10 @@ def summarize_groups(
                 num_predict=config.summary_tokens,
                 temperature=config.temperature,
                 timeout=config.timeout,
-                format=GROUP_SUMMARY_SCHEMA,
+                format=None,
             ),
         )
-        data = parse_json_object(output, f"summary:{group.name}")
-        return group_summary_markdown(data, group.name)
+        return group_summary_text(output, group.name)
 
     summaries = run_workers(context.groups, config.workers, summarize)
     summaries.sort()
@@ -160,6 +157,8 @@ def build_final_prompt(
         "title_prefixes": ", ".join(title_config.prefixes),
         "title_update": str(title_config.update).lower(),
         "title_enforce_prefix": str(title_config.enforce_prefix).lower(),
+        "title_shape": "TITLE: feat: short clear title\n\n" if title_config.update else "",
+        "title_rules": title_rules(title_config),
     }
     if prompt_template.strip():
         return render_configured_prompt(
@@ -168,8 +167,6 @@ def build_final_prompt(
             values=values,
             extra_instructions=extra_instructions,
         )
-    values["title_shape"] = "TITLE: feat: short clear title\n\n" if title_config.update else ""
-    values["title_rules"] = title_rules(title_config)
     return render_configured_prompt(
         default_template=DEFAULT_FINAL_PROMPT_TEMPLATE,
         prompt_template="",
@@ -178,42 +175,11 @@ def build_final_prompt(
     )
 
 
-def parse_json_object(text: str, label: str) -> dict[str, object]:
-    try:
-        loaded = json.loads(text)
-    except json.JSONDecodeError as error:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end <= start:
-            raise ValueError(f"{label}: Ollama did not return JSON") from error
-        loaded = json.loads(text[start : end + 1])
-    if not isinstance(loaded, dict):
-        raise ValueError(f"{label}: Ollama returned non-object JSON")
-    return loaded
-
-
-def group_summary_markdown(data: dict[str, object], fallback_area: str) -> str:
-    def items(name: str) -> list[str]:
-        values = data.get(name)
-        return [str(value) for value in values] if isinstance(values, list) else []
-
-    area = str(data.get("area") or fallback_area).strip()
-    summary = str(data.get("summary") or "").strip()
-    return "\n".join(
-        [
-            f"### {area}",
-            "",
-            f"Summary: {summary}",
-            "",
-            _list_section("Important changes", items("important_changes")),
-            "",
-            _list_section("Significant files", items("significant_files")),
-            "",
-            _list_section("Validation signals", items("validation_signals")),
-            "",
-            _list_section("Risk signals", items("risk_signals")),
-        ]
-    ).strip()
+def group_summary_text(text: str, fallback_area: str) -> str:
+    body = text.strip()
+    if not body:
+        body = "- No useful summary returned for the group."
+    return f"### {fallback_area}\n\n{body}"
 
 
 def parse_summary_result(text: str, title: TitleConfig | None = None) -> dict[str, str]:
@@ -232,7 +198,7 @@ def parse_summary_result(text: str, title: TitleConfig | None = None) -> dict[st
         if in_body:
             body_lines.append(line)
 
-    body = "\n".join(body_lines).strip()
+    body = clean_summary_body("\n".join(body_lines))
     if title_config.update and not title:
         raise ValueError(f"model returned unusable title/body\n\nResponse:\n{text}")
     if not body:
@@ -243,6 +209,22 @@ def parse_summary_result(text: str, title: TitleConfig | None = None) -> dict[st
     if title_config.update:
         result["title"] = title
     return result
+
+
+def clean_summary_body(text: str) -> str:
+    parts = []
+    blank = False
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            blank = True
+            continue
+        if parts and blank:
+            parts.append("")
+        parts.append(line)
+        blank = False
+    return "\n".join(parts).strip()
 
 
 def edit_pr(repo_root: Path, url: str, title: str | None, body: str) -> None:
@@ -258,12 +240,6 @@ def edit_pr(repo_root: Path, url: str, title: str | None, body: str) -> None:
         Path(body_file).unlink(missing_ok=True)
 
 
-def _list_section(name: str, items: list[str]) -> str:
-    if not items:
-        return f"{name}:\n- none visible"
-    return f"{name}:\n" + "\n".join(f"- {item}" for item in items)
-
-
 def default_title_config() -> TitleConfig:
     from shippy.config import TitleConfig
 
@@ -276,7 +252,9 @@ def default_title_config() -> TitleConfig:
 
 def title_rules(title: TitleConfig) -> str:
     if not title.update:
-        return "- Do not write TITLE. Only write BODY."
+        return "- Output starts with BODY:."
     if title.enforce_prefix:
-        return "- Title must start with exactly one of: " + ", ".join(title.prefixes)
-    return "- Title can use any concise format. Prefixes are optional."
+        return "- Output starts with TITLE: using one of these prefixes: " + ", ".join(
+            title.prefixes
+        )
+    return "- Output starts with TITLE: followed by a short title."

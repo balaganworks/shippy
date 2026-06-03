@@ -10,9 +10,9 @@ from shippy.summary import (
     SummaryGroup,
     build_final_prompt,
     build_group_prompt,
+    clean_summary_body,
     collect_summary_context,
-    group_summary_markdown,
-    parse_json_object,
+    group_summary_text,
     parse_name_status,
     parse_summary_result,
     split_groups,
@@ -78,8 +78,17 @@ class SummaryTest(unittest.TestCase):
         )
         group = SummaryGroup("src", ["src/file.py"], "diff --git", False)
 
-        self.assertIn("Return one JSON object", build_group_prompt(context, group))
-        self.assertIn("TITLE:", build_final_prompt(context, ["### src"]))
+        self.assertIn("Return plain text notes only", build_group_prompt(context, group))
+        self.assertIn("Important changes:", build_group_prompt(context, group))
+        self.assertIn(
+            "Return this exact plain-text shape",
+            build_final_prompt(context, ["### src"]),
+        )
+        self.assertIn(
+            "Grouped summaries from the earlier summary step:",
+            build_final_prompt(context, ["### src"]),
+        )
+        self.assertNotIn("PR branch:", build_final_prompt(context, ["### src"]))
 
     def test_parse_summary_result_requires_title_and_body(self) -> None:
         result = parse_summary_result("TITLE: feat: add thing\n\nBODY:\n## Summary\n- done")
@@ -107,14 +116,31 @@ class SummaryTest(unittest.TestCase):
 
         self.assertEqual(result["title"], "Ship thing")
 
-    def test_parse_json_object_accepts_wrapped_json(self) -> None:
-        self.assertEqual(parse_json_object('noise {"area": "src"} tail', "x"), {"area": "src"})
+    def test_parse_summary_result_cleans_body_spacing(self) -> None:
+        result = parse_summary_result(
+            "TITLE: feat: add thing\n\n"
+            "BODY:\n"
+            "## Summary\n"
+            "- added thing\n\n\n"
+            "## Risk\n"
+            "- small migration risk\n"
+        )
 
-    def test_group_summary_markdown_fills_empty_lists(self) -> None:
-        text = group_summary_markdown({"area": "src", "summary": "changed code"}, "fallback")
+        self.assertEqual(result["title"], "feat: add thing")
+        self.assertEqual(
+            result["body"],
+            "## Summary\n- added thing\n\n## Risk\n- small migration risk",
+        )
 
-        self.assertIn("### src", text)
-        self.assertIn("- none visible", text)
+    def test_clean_summary_body_collapses_blank_lines(self) -> None:
+        body = clean_summary_body("## Summary\n- done\n\n\n## Validation\n- uv run tests")
+
+        self.assertEqual(body, "## Summary\n- done\n\n## Validation\n- uv run tests")
+
+    def test_group_summary_text_wraps_area_notes(self) -> None:
+        text = group_summary_text("- changed code", "src")
+
+        self.assertEqual(text, "### src\n\n- changed code")
 
     def test_parse_name_status_uses_destination_for_renames(self) -> None:
         files = parse_name_status("M\tsrc/a.py\nR100\told.py\tnew.py")
