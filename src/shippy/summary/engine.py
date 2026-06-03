@@ -25,6 +25,7 @@ from shippy.workflow import (
     render_configured_prompt,
     run_workers,
     single_group_message,
+    truncation_messages,
     work_group_values,
 )
 
@@ -87,7 +88,8 @@ def collect_summary_context(repo_root: Path, config: SummaryConfig) -> SummaryCo
         runner=run,
     )
     groups = [
-        SummaryGroup(group.name, group.paths, group.diff, group.trimmed) for group in context.groups
+        SummaryGroup(group.name, group.paths, group.diff, group.trimmed, group.truncations)
+        for group in context.groups
     ]
     summary_context = SummaryContext(
         base=context.base,
@@ -99,6 +101,8 @@ def collect_summary_context(repo_root: Path, config: SummaryConfig) -> SummaryCo
         groups=groups,
     )
     say(context_ready_message(summary_context, "summary"))
+    for message in truncation_messages(summary_context):
+        say(message)
     return summary_context
 
 

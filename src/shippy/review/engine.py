@@ -29,6 +29,7 @@ from shippy.workflow import (
     render_configured_prompt,
     run_workers,
     single_group_message,
+    truncation_messages,
     work_group_values,
 )
 
@@ -68,6 +69,8 @@ def review_pull_request(
         say("🧭 Collecting PR review context...")
         review_context = collect_review_context(repo_root, config)
         say(context_ready_message(review_context, "review"))
+        for message in truncation_messages(review_context):
+            say(message)
         area_reviews = review_groups(ollama, review_context, pr, config)
         say(f"📝 Asking {config.model} for final markdown review...")
         result = ollama.generate_with_stats(
@@ -107,7 +110,8 @@ def collect_review_context(repo_root: Path, config: ReviewConfig) -> ReviewConte
         truncation_marker="[review group diff truncated]",
     )
     groups = [
-        ReviewGroup(group.name, group.paths, group.diff, group.trimmed) for group in context.groups
+        ReviewGroup(group.name, group.paths, group.diff, group.trimmed, group.truncations)
+        for group in context.groups
     ]
     return ReviewContext(
         base=context.base,

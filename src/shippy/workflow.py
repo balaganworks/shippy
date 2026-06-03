@@ -20,6 +20,7 @@ class WorkGroup:
     paths: Sequence[str]
     diff: str
     trimmed: bool
+    truncations: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -96,17 +97,18 @@ def collect_work_context(
 
     groups = []
     for name, paths in split_groups(parse_name_status(name_status), max_groups):
-        diff_paths = paths or pathspec
-        diff = runner(
-            ["git", "diff", f"--unified={unified}", commit_range, "--", *diff_paths],
-            repo_root,
-            True,
+        groups.extend(
+            build_sized_groups(
+                name,
+                paths,
+                repo_root=repo_root,
+                commit_range=commit_range,
+                unified=unified,
+                max_group_chars=max_group_chars,
+                truncation_marker=truncation_marker,
+                runner=runner,
+            )
         )
-        trimmed = len(diff) > max_group_chars
-        if trimmed:
-            suffix = f"\n\n{truncation_marker}\n" if truncation_marker else ""
-            diff = diff[:max_group_chars] + suffix
-        groups.append(WorkGroup(name=name, paths=paths, diff=diff, trimmed=trimmed))
 
     return WorkContext(
         base=base,
@@ -117,6 +119,80 @@ def collect_work_context(
         ignores=ignores,
         groups=groups,
     )
+
+
+def build_sized_groups(
+    name: str,
+    paths: list[str],
+    *,
+    repo_root: Path,
+    commit_range: str,
+    unified: int,
+    max_group_chars: int,
+    truncation_marker: str,
+    runner: Callable[[list[str], Path, bool], str],
+) -> list[WorkGroup]:
+    if not paths:
+        diff = runner(
+            ["git", "diff", f"--unified={unified}", commit_range, "--", "."],
+            repo_root,
+            True,
+        )
+        return [trimmed_group(name, [], diff, max_group_chars, truncation_marker)]
+
+    groups: list[WorkGroup] = []
+    current_paths: list[str] = []
+    current_parts: list[str] = []
+
+    def flush() -> None:
+        if not current_paths:
+            return
+        group_name = numbered_group_name(name, len(groups) + 1)
+        groups.append(WorkGroup(group_name, list(current_paths), "\n\n".join(current_parts), False))
+        current_paths.clear()
+        current_parts.clear()
+
+    for path in paths:
+        diff = runner(
+            ["git", "diff", f"--unified={unified}", commit_range, "--", path],
+            repo_root,
+            True,
+        )
+        if len(diff) > max_group_chars:
+            flush()
+            groups.append(trimmed_group(path, [path], diff, max_group_chars, truncation_marker))
+            continue
+
+        next_size = len("\n\n".join([*current_parts, diff]))
+        if current_parts and next_size > max_group_chars:
+            flush()
+        current_paths.append(path)
+        current_parts.append(diff)
+
+    flush()
+    return groups
+
+
+def numbered_group_name(name: str, number: int) -> str:
+    return name if number == 1 else f"{name} #{number}"
+
+
+def trimmed_group(
+    name: str,
+    paths: Sequence[str],
+    diff: str,
+    max_group_chars: int,
+    truncation_marker: str,
+) -> WorkGroup:
+    if len(diff) <= max_group_chars:
+        return WorkGroup(name, paths, diff, False)
+    kept = diff[:max_group_chars]
+    total_lines = len(diff.splitlines())
+    kept_lines = len(kept.splitlines())
+    suffix = f"\n\n{truncation_marker}\n" if truncation_marker else ""
+    target = paths[0] if paths else name
+    truncation = f"{target}: kept first {kept_lines} of {total_lines} diff lines"
+    return WorkGroup(name, paths, kept + suffix, True, [truncation])
 
 
 def parse_name_status(output: str) -> list[tuple[str, str]]:
@@ -186,6 +262,14 @@ def context_ready_message(context: WorkContext, action: str) -> str:
     trimmed = sum(group.trimmed for group in context.groups)
     suffix = f", {trimmed} truncated" if trimmed else ""
     return f"📦 Context ready: {file_count} files, {group_count} {action} {group_label}{suffix}"
+
+
+def truncation_messages(context: WorkContext) -> list[str]:
+    return [
+        f"⚠️  Truncated diff: {truncation}"
+        for group in context.groups
+        for truncation in group.truncations
+    ]
 
 
 def single_group_message(action: str) -> str:

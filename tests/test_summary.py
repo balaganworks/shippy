@@ -272,6 +272,57 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(context.groups[0].name, "all changes")
         self.assertEqual(context.groups[0].diff, "small diff")
 
+    def test_collect_summary_context_splits_large_folder_before_trimming(self) -> None:
+        config = SummaryConfig(
+            model="gemma4:e4b",
+            api_base="http://localhost:11434",
+            num_ctx=8192,
+            max_group_chars=20,
+            max_groups=15,
+            summary_tokens=900,
+            final_tokens=1800,
+            temperature=0.1,
+            workers=5,
+            timeout=420,
+            ignores=[],
+            title=TitleConfig(update=True, enforce_prefix=True, prefixes=["feat:"]),
+            split_group_prompt="",
+            final_prompt="",
+            split_group_extra_instructions="",
+            final_extra_instructions="",
+        )
+
+        def fake_run(cmd: list[str], cwd: Path, check: bool = True) -> str:
+            joined = " ".join(cmd)
+            if "defaultBranchRef" in joined:
+                return "main"
+            if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+                return "feat/x"
+            if cmd[:2] == ["git", "merge-base"]:
+                return "base-sha"
+            if "--name-status" in cmd:
+                return "M\tsrc/a.py\nM\tsrc/b.py"
+            if "--stat" in cmd:
+                return "src/a.py | 1 +\nsrc/b.py | 1 +"
+            if cmd[:2] == ["git", "log"]:
+                return "abc change"
+            if cmd[:2] == ["git", "diff"] and cmd[-1] == "src/a.py":
+                return "diff a"
+            if cmd[:2] == ["git", "diff"] and cmd[-1] == "src/b.py":
+                return "diff b"
+            if cmd[:2] == ["git", "diff"]:
+                return "diff a\n\nthis whole group is too large\n\ndiff b"
+            raise AssertionError(cmd)
+
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch("shippy.summary.engine.run", fake_run),
+        ):
+            context = collect_summary_context(Path("."), config)
+
+        self.assertEqual([group.paths for group in context.groups], [["src/a.py", "src/b.py"]])
+        self.assertFalse(any(group.trimmed for group in context.groups))
+
 
 if __name__ == "__main__":
     unittest.main()
