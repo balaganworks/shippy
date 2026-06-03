@@ -66,7 +66,6 @@ def summarize_pull_request(repo_root: Path, pr_url: str | None, config: SummaryC
             num_predict=config.final_tokens,
             temperature=config.temperature,
             timeout=config.timeout,
-            format=None,
         ),
     )
     usage = final.usage_text()
@@ -115,7 +114,7 @@ def summarize_groups(
         say(single_group_message("summary"))
         return []
 
-    say(f"🧩 Summarizing {len(context.groups)} groups with {config.workers} workers...")
+    say(f"🧩 Summarizing {len(context.groups)} groups with {config.workers} parallel workers...")
 
     def summarize(group: SummaryGroup) -> str:
         output = ollama.generate_with_stats(
@@ -130,7 +129,6 @@ def summarize_groups(
                 num_predict=config.summary_tokens,
                 temperature=config.temperature,
                 timeout=config.timeout,
-                format=None,
             ),
         )
         usage = output.usage_text()

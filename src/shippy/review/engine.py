@@ -134,7 +134,7 @@ def review_groups(
         say(single_group_message("review"))
         return []
 
-    say(f"🧩 Reviewing {len(context.groups)} groups with {config.workers} workers...")
+    say(f"🧩 Reviewing {len(context.groups)} groups with {config.workers} parallel workers...")
 
     def review(group: ReviewGroup) -> str:
         result = ollama.generate_with_stats(

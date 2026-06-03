@@ -17,7 +17,6 @@ class OllamaOptions:
     num_predict: int
     temperature: float
     timeout: int
-    format: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -71,8 +70,6 @@ class OllamaClient:
                 "num_predict": options.num_predict,
             },
         }
-        if options.format:
-            payload["format"] = options.format
         request = urllib.request.Request(
             f"{self.api_base}/api/generate",
             data=json.dumps(payload).encode(),

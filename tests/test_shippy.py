@@ -219,7 +219,6 @@ class OllamaTest(unittest.TestCase):
                     num_predict=1800,
                     temperature=0.05,
                     timeout=420,
-                    format={"type": "object"},
                 ),
             )
 
