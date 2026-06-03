@@ -25,9 +25,10 @@ from shippy.workflow import (
     WorkContext,
     WorkGroup,
     collect_work_context,
-    parse_name_status,
+    context_ready_message,
     render_configured_prompt,
     run_workers,
+    single_group_message,
     work_group_values,
 )
 
@@ -66,7 +67,7 @@ def review_pull_request(
     try:
         say("🧭 Collecting PR review context...")
         review_context = collect_review_context(repo_root, config)
-        say(_context_message(review_context))
+        say(context_ready_message(review_context, "review"))
         area_reviews = review_groups(ollama, review_context, pr, config)
         say(f"📝 Asking {config.model} for final markdown review...")
         result = ollama.generate_with_stats(
@@ -126,7 +127,7 @@ def review_groups(
     config: ReviewConfig,
 ) -> list[str]:
     if len(context.groups) == 1:
-        say("➡️  Single review group — skipping parallel reviews")
+        say(single_group_message("review"))
         return []
 
     say(f"🧩 Reviewing {len(context.groups)} groups with {config.workers} workers...")
@@ -247,12 +248,3 @@ def pending_body() -> str:
 
 def failure_body(reason: str) -> str:
     return REVIEW_FAILURE_BODY_TEMPLATE.format(reason=reason.strip() or UNKNOWN_FAILURE)
-
-
-def _context_message(context: ReviewContext) -> str:
-    file_count = len(parse_name_status(context.name_status))
-    group_count = len(context.groups)
-    step = "final review" if group_count == 1 else "group review"
-    trimmed = sum(group.trimmed for group in context.groups)
-    suffix = f", {trimmed} truncated" if trimmed else ""
-    return f"📦 Context ready: {file_count} files, {len.co} to {step}{suffix}"

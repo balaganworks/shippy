@@ -21,9 +21,10 @@ from shippy.workflow import (
     WorkContext,
     WorkGroup,
     collect_work_context,
-    parse_name_status,
+    context_ready_message,
     render_configured_prompt,
     run_workers,
+    single_group_message,
     work_group_values,
 )
 
@@ -88,12 +89,7 @@ def collect_summary_context(repo_root: Path, config: SummaryConfig) -> SummaryCo
     groups = [
         SummaryGroup(group.name, group.paths, group.diff, group.trimmed) for group in context.groups
     ]
-    file_count = len(parse_name_status(context.name_status))
-    step = "final summary" if len(groups) == 1 else "group summaries"
-    trimmed = sum(group.trimmed for group in groups)
-    suffix = f", {trimmed} truncated" if trimmed else ""
-    say(f"📦 Context ready: {file_count} files, proceeding to {step}{suffix}")
-    return SummaryContext(
+    summary_context = SummaryContext(
         base=context.base,
         branch=context.branch,
         commits=context.commits,
@@ -102,6 +98,8 @@ def collect_summary_context(repo_root: Path, config: SummaryConfig) -> SummaryCo
         ignores=context.ignores,
         groups=groups,
     )
+    say(context_ready_message(summary_context, "summary"))
+    return summary_context
 
 
 def summarize_groups(
@@ -110,7 +108,7 @@ def summarize_groups(
     config: SummaryConfig,
 ) -> list[str]:
     if len(context.groups) == 1:
-        say("➡️  Single summary group — skipping parallel summaries")
+        say(single_group_message("summary"))
         return []
 
     say(f"🧩 Summarizing {len(context.groups)} groups with {config.workers} workers...")

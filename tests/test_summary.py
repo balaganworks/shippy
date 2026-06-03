@@ -17,6 +17,7 @@ from shippy.summary import (
     parse_summary_result,
     split_groups,
 )
+from shippy.workflow import context_ready_message, single_group_message
 
 
 class SummaryTest(unittest.TestCase):
@@ -151,6 +152,26 @@ class SummaryTest(unittest.TestCase):
         groups = split_groups([("M", "src/a.py"), ("M", "tests/test_a.py")], max_groups=15)
 
         self.assertEqual(groups, [("src", ["src/a.py"]), ("tests", ["tests/test_a.py"])])
+
+    def test_shared_context_messages_are_action_agnostic(self) -> None:
+        context = SummaryContext(
+            base="main",
+            branch="feat/x",
+            commits="abc change",
+            stat="file.py | 1 +",
+            name_status="M\tsrc/a.py\nM\ttests/test_a.py",
+            ignores=[],
+            groups=[SummaryGroup("all changes", ["src/a.py"], "diff", False)],
+        )
+
+        self.assertEqual(
+            context_ready_message(context, "review"),
+            "📦 Context ready: 2 files, 1 review group",
+        )
+        self.assertEqual(
+            single_group_message("summary"),
+            "➡️  Single summary group — skipping parallel workers",
+        )
 
     def test_collect_summary_context_uses_ignores_and_trims_group_diff(self) -> None:
         config = SummaryConfig(

@@ -179,6 +179,19 @@ def run_workers(items: Sequence[WorkGroup], workers: int, job: Callable[[WorkGro
     return results
 
 
+def context_ready_message(context: WorkContext, action: str) -> str:
+    file_count = len(parse_name_status(context.name_status))
+    group_count = len(context.groups)
+    group_label = "group" if group_count == 1 else "groups"
+    trimmed = sum(group.trimmed for group in context.groups)
+    suffix = f", {trimmed} truncated" if trimmed else ""
+    return f"📦 Context ready: {file_count} files, {group_count} {action} {group_label}{suffix}"
+
+
+def single_group_message(action: str) -> str:
+    return f"➡️  Single {action} group — skipping parallel workers"
+
+
 def bullet_list(values: Sequence[str]) -> str:
     return "\n".join(f"- {value}" for value in values)
 
