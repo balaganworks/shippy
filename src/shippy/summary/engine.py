@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 
 from shippy.git import run
 from shippy.github import GitHubClient
-from shippy.ollama import OllamaClient, OllamaOptions
+from shippy.log import SessionLogger
+from shippy.ollama import GenerateResult, OllamaClient, OllamaOptions
 from shippy.review.engine import say
 from shippy.summary.constants import (
     DEFAULT_FINAL_PROMPT_TEMPLATE,
@@ -46,34 +47,96 @@ class SummaryContext(WorkContext):
 def summarize_pull_request(repo_root: Path, pr_url: str | None, config: SummaryConfig) -> None:
     github = GitHubClient(repo_root)
     ollama = OllamaClient(config.api_base, config.model)
+    logger = SessionLogger(repo_root, "summary", config.debug.log_dir, config.debug.verbose)
     ollama.assert_model_available()
 
-    url = pr_url or github.current_branch_pull_request_url()
+    try:
+        result = generate_summary(repo_root, ollama, config, logger)
+        publish_summary(repo_root, github, pr_url, result)
+    except Exception as error:
+        handle_summary_error(logger, error)
+        raise
+
+    say("✅ Updated PR title/body")
+
+
+def generate_summary(
+    repo_root: Path,
+    ollama: OllamaClient,
+    config: SummaryConfig,
+    logger: SessionLogger,
+) -> dict[str, str]:
+    context = prepare_summary_context(repo_root, config, logger)
+    summaries = summarize_groups(ollama, context, config, logger)
+    final = final_summary(ollama, context, summaries, config, logger)
+    return parse_summary_result(final.text, config.title)
+
+
+def prepare_summary_context(
+    repo_root: Path,
+    config: SummaryConfig,
+    logger: SessionLogger,
+) -> SummaryContext:
     say("🧭 Collecting PR summary context...")
     context = collect_summary_context(repo_root, config)
-    summaries = summarize_groups(ollama, context, config)
-    say(f"📝 Asking {config.model} for final markdown summary...")
-    final = ollama.generate_with_stats(
-        prompt=build_final_prompt(
-            context,
-            summaries,
-            config.final_prompt,
-            config.final_extra_instructions,
-            config.title,
-        ),
-        options=OllamaOptions(
-            num_ctx=config.num_ctx,
-            num_predict=config.final_tokens,
-            temperature=config.temperature,
-            timeout=config.timeout,
-        ),
+    logger.log(
+        "summary_context",
+        branch=context.branch,
+        base=context.base,
+        groups=[group_log(group) for group in context.groups],
     )
-    usage = final.usage_text()
+    return context
+
+
+def final_summary(
+    ollama: OllamaClient,
+    context: SummaryContext,
+    summaries: list[str],
+    config: SummaryConfig,
+    logger: SessionLogger,
+) -> GenerateResult:
+    say(f"📝 Asking {config.model} for final markdown summary...")
+    prompt = build_final_prompt(
+        context,
+        summaries,
+        config.final_prompt,
+        config.final_extra_instructions,
+        config.title,
+    )
+    options = OllamaOptions(
+        num_ctx=config.num_ctx,
+        num_predict=config.final_tokens,
+        temperature=config.temperature,
+        timeout=config.timeout,
+    )
+    logger.request("summary_final_request", prompt, model=config.model, options=options)
+    result = ollama.generate_with_stats(prompt=prompt, options=options)
+    logger.response(
+        "summary_final_response",
+        result.text,
+        prompt_tokens=result.prompt_tokens,
+        output_tokens=result.output_tokens,
+    )
+    usage = result.usage_text()
     if usage:
         say(f"📊 Final summary tokens: {usage}")
-    result = parse_summary_result(final.text, config.title)
+    return result
+
+
+def publish_summary(
+    repo_root: Path,
+    github: GitHubClient,
+    pr_url: str | None,
+    result: dict[str, str],
+) -> None:
+    url = pr_url or github.current_branch_pull_request_url()
     edit_pr(repo_root, url, result.get("title"), result["body"])
-    say("✅ Updated PR title/body")
+
+
+def handle_summary_error(logger: SessionLogger, error: Exception) -> None:
+    message = f"{type(error).__name__}: {error}"
+    logger.log("summary_error", error=message)
+    say(f"❌ Summary failed: {message}")
 
 
 def collect_summary_context(repo_root: Path, config: SummaryConfig) -> SummaryContext:
@@ -109,6 +172,7 @@ def summarize_groups(
     ollama: OllamaClient,
     context: SummaryContext,
     config: SummaryConfig,
+    logger: SessionLogger | None = None,
 ) -> list[str]:
     if len(context.groups) == 1:
         say(single_group_message("summary"))
@@ -117,20 +181,43 @@ def summarize_groups(
     say(f"🧩 Summarizing {len(context.groups)} groups with {config.workers} parallel workers...")
 
     def summarize(group: SummaryGroup) -> str:
-        output = ollama.generate_with_stats(
-            build_group_prompt(
-                context,
-                group,
-                config.split_group_prompt,
-                config.split_group_extra_instructions,
-            ),
-            OllamaOptions(
-                num_ctx=config.num_ctx,
-                num_predict=config.summary_tokens,
-                temperature=config.temperature,
-                timeout=config.timeout,
-            ),
+        prompt = build_group_prompt(
+            context,
+            group,
+            config.split_group_prompt,
+            config.split_group_extra_instructions,
         )
+        options = OllamaOptions(
+            num_ctx=config.num_ctx,
+            num_predict=config.summary_tokens,
+            temperature=config.temperature,
+            timeout=config.timeout,
+        )
+        if logger:
+            logger.request(
+                "summary_group_request",
+                prompt,
+                group=group_log(group),
+                options=options,
+            )
+        try:
+            output = ollama.generate_with_stats(prompt, options)
+        except Exception as error:
+            if logger:
+                logger.log(
+                    "summary_group_error",
+                    group=group.name,
+                    error=f"{type(error).__name__}: {error}",
+                )
+            raise
+        if logger:
+            logger.response(
+                "summary_group_response",
+                output.text,
+                group=group.name,
+                prompt_tokens=output.prompt_tokens,
+                output_tokens=output.output_tokens,
+            )
         usage = output.usage_text()
         if usage:
             say(f"📊 Summary group {group.name}: {usage}")
@@ -139,6 +226,16 @@ def summarize_groups(
     summaries = run_workers(context.groups, config.workers, summarize)
     summaries.sort()
     return summaries
+
+
+def group_log(group: SummaryGroup | WorkGroup) -> dict[str, object]:
+    return {
+        "name": group.name,
+        "paths": group.paths,
+        "trimmed": group.trimmed,
+        "diff_chars": len(group.diff),
+        "truncations": group.truncations,
+    }
 
 
 def build_group_prompt(

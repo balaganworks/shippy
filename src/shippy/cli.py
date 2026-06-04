@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from importlib import resources
 from pathlib import Path
 
@@ -31,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--pr-url")
     parser.add_argument("--config", type=Path)
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print configured debug session logs to stdout",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("command", choices=[COMMAND_INIT, COMMAND_SUMMARY, COMMAND_REVIEW])
     return parser
@@ -58,9 +64,13 @@ def main() -> int:
             return 0
         if args.command == COMMAND_SUMMARY:
             config = load_summary_config(repo_root, args.config)
+            if args.verbose:
+                config = replace(config, debug=replace(config.debug, verbose=True))
             summarize_pull_request(repo_root, args.pr_url, config)
         if args.command == COMMAND_REVIEW:
             config = load_review_config(repo_root, args.config)
+            if args.verbose:
+                config = replace(config, debug=replace(config.debug, verbose=True))
             pr_url = args.pr_url or GitHubClient(repo_root).current_branch_pull_request_url()
             review_pull_request(repo_root, pr_url, config)
         return 0

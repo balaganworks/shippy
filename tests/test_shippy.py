@@ -8,6 +8,7 @@ from shippy.cli import init_config
 from shippy.config import load_review_config, load_summary_config
 from shippy.errors import ConfigError, OllamaError
 from shippy.github import GitHubClient
+from shippy.log import SessionLogger
 from shippy.ollama import OllamaClient, OllamaOptions
 from shippy.prompts import render_prompt
 
@@ -87,6 +88,8 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(config.final_prompt, "custom {{diff}}")
             self.assertEqual(config.split_group_extra_instructions, "inspect group carefully")
             self.assertEqual(config.final_extra_instructions, "ignore generated docs")
+            self.assertEqual(config.debug.log_dir, "logs")
+            self.assertFalse(config.debug.verbose)
 
     def test_load_summary_config_from_toml(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -103,6 +106,26 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(config.title.prefixes, ["feat:", "fix:"])
             self.assertEqual(config.split_group_extra_instructions, "focus on API changes")
             self.assertEqual(config.final_extra_instructions, "keep risk short")
+            self.assertEqual(config.debug.log_dir, "logs")
+            self.assertFalse(config.debug.verbose)
+
+    def test_load_debug_config_from_toml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            (repo_root / ".shippy.toml").write_text(
+                CONFIG
+                + """
+[debug]
+log_dir = ".shippy/logs"
+verbose = true
+""",
+                encoding="utf-8",
+            )
+
+            config = load_review_config(repo_root)
+
+            self.assertEqual(config.debug.log_dir, ".shippy/logs")
+            self.assertTrue(config.debug.verbose)
 
     def test_explicit_config_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -185,6 +208,46 @@ class HelpersTest(unittest.TestCase):
         with patch("shippy.github.run", fake_run), self.assertRaises(ValueError):
             GitHubClient(Path(".")).current_branch_pull_request_url()
 
+    def test_session_logger_writes_log_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = SessionLogger(Path(tmp), "summary", ".shippy/logs")
+
+            logger.request(
+                "summary_group_request",
+                "line one\nline two",
+                model="gemma4:e4b",
+                options={"num_ctx": 8192},
+            )
+
+            log_file = next((Path(tmp) / ".shippy" / "logs").glob("shippy_*_summary.log"))
+            line = log_file.read_text(encoding="utf-8").strip()
+            self.assertIn("Summary Group Request", line)
+            self.assertIn("Model: gemma4:e4b", line)
+            self.assertIn("Num Ctx: 8192", line)
+            self.assertIn("Prompt Chars: 17", line)
+            self.assertNotIn("line one", line)
+            self.assertNotIn("\\n", line)
+
+    def test_session_logger_keeps_last_ten_action_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_dir = Path(tmp) / "logs"
+            log_dir.mkdir()
+            for index in range(12):
+                (log_dir / f"shippy_20260101_0000{index:02}_review.log").write_text(
+                    "old",
+                    encoding="utf-8",
+                )
+            for index in range(12):
+                (log_dir / f"shippy_20260101_0000{index:02}_summary.log").write_text(
+                    "old",
+                    encoding="utf-8",
+                )
+
+            SessionLogger(Path(tmp), "review", "logs")
+
+            self.assertEqual(len(list(log_dir.glob("shippy_*_review.log"))), 10)
+            self.assertEqual(len(list(log_dir.glob("shippy_*_summary.log"))), 12)
+
 
 class OllamaTest(unittest.TestCase):
     def test_generate_sends_configured_options(self) -> None:
@@ -240,6 +303,33 @@ class OllamaTest(unittest.TestCase):
         with (
             patch("urllib.request.urlopen", fake_urlopen),
             self.assertRaisesRegex(OllamaError, "timed out after 3s"),
+        ):
+            client.generate_with_stats(
+                "prompt",
+                OllamaOptions(
+                    num_ctx=8192,
+                    num_predict=1800,
+                    temperature=0.05,
+                    timeout=3,
+                ),
+            )
+
+    def test_generate_rejects_empty_response(self) -> None:
+        class Response:
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"response": "   ", "eval_count": 1024}).encode()
+
+        client = OllamaClient("http://localhost:11434", "gemma4:e4b")
+
+        with (
+            patch("urllib.request.urlopen", lambda *_args, **_kwargs: Response()),
+            self.assertRaisesRegex(OllamaError, "empty response"),
         ):
             client.generate_with_stats(
                 "prompt",

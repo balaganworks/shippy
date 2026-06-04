@@ -88,10 +88,16 @@ class OllamaClient:
         except urllib.error.URLError as error:
             raise OllamaError(f"Ollama request failed: {error}") from error
 
+        text = str(data["response"]).strip()
+        output_tokens = _int_or_none(data.get("eval_count"))
+        if not text:
+            detail = f"output tokens {output_tokens}" if output_tokens is not None else "no text"
+            raise OllamaError(f"Ollama returned empty response ({detail})")
+
         return GenerateResult(
-            text=str(data["response"]).strip(),
+            text=text,
             prompt_tokens=_int_or_none(data.get("prompt_eval_count")),
-            output_tokens=_int_or_none(data.get("eval_count")),
+            output_tokens=output_tokens,
         )
 
 
