@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from shippy.cli import init_config
 from shippy.config import load_review_config, load_summary_config
-from shippy.errors import ConfigError
+from shippy.errors import ConfigError, OllamaError
 from shippy.github import GitHubClient
 from shippy.ollama import OllamaClient, OllamaOptions
 from shippy.prompts import render_prompt
@@ -230,6 +230,26 @@ class OllamaTest(unittest.TestCase):
         self.assertEqual(captured["payload"]["options"]["num_ctx"], 8192)
         self.assertEqual(captured["payload"]["options"]["num_predict"], 1800)
         self.assertEqual(captured["payload"]["options"]["temperature"], 0.05)
+
+    def test_generate_wraps_timeout(self) -> None:
+        client = OllamaClient("http://localhost:11434", "gemma4:e4b")
+
+        def fake_urlopen(_request: object, timeout: int) -> object:
+            raise TimeoutError("timed out")
+
+        with (
+            patch("urllib.request.urlopen", fake_urlopen),
+            self.assertRaisesRegex(OllamaError, "timed out after 3s"),
+        ):
+            client.generate_with_stats(
+                "prompt",
+                OllamaOptions(
+                    num_ctx=8192,
+                    num_predict=1800,
+                    temperature=0.05,
+                    timeout=3,
+                ),
+            )
 
 
 if __name__ == "__main__":

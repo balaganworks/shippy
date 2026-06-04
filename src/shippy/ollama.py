@@ -79,6 +79,12 @@ class OllamaClient:
         try:
             with urllib.request.urlopen(request, timeout=options.timeout) as response:
                 data = json.loads(response.read().decode())
+        except TimeoutError as error:
+            raise OllamaError(
+                f"Ollama request timed out after {options.timeout}s "
+                f"(input {len(prompt)} chars, num_ctx {options.num_ctx}, "
+                f"num_predict {options.num_predict})"
+            ) from error
         except urllib.error.URLError as error:
             raise OllamaError(f"Ollama request failed: {error}") from error
 
