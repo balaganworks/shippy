@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from shippy.cli import init_config
 from shippy.config import load_review_config, load_summary_config
-from shippy.errors import ConfigError
+from shippy.errors import ConfigError, OllamaError
 from shippy.github import GitHubClient
 from shippy.ollama import OllamaClient, OllamaOptions
 from shippy.prompts import render_prompt
@@ -198,7 +198,9 @@ class OllamaTest(unittest.TestCase):
                 return None
 
             def read(self) -> bytes:
-                return json.dumps({"response": "ok"}).encode()
+                return json.dumps(
+                    {"response": "ok", "prompt_eval_count": 12, "eval_count": 3}
+                ).encode()
 
         def fake_urlopen(request: object, timeout: int) -> Response:
             request_data = request.data
@@ -210,25 +212,44 @@ class OllamaTest(unittest.TestCase):
         client = OllamaClient("http://localhost:11434", "gemma4:e4b")
 
         with patch("urllib.request.urlopen", fake_urlopen):
-            result = client.generate(
+            result = client.generate_with_stats(
                 "prompt",
                 OllamaOptions(
                     num_ctx=8192,
                     num_predict=1800,
                     temperature=0.05,
                     timeout=420,
-                    format={"type": "object"},
                 ),
             )
 
-        self.assertEqual(result, "ok")
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(result.usage_text(), "input 12, output 3")
         self.assertEqual(captured["url"], "http://localhost:11434/api/generate")
         self.assertEqual(captured["timeout"], 420)
         self.assertEqual(captured["payload"]["prompt"], "prompt")
         self.assertEqual(captured["payload"]["options"]["num_ctx"], 8192)
         self.assertEqual(captured["payload"]["options"]["num_predict"], 1800)
         self.assertEqual(captured["payload"]["options"]["temperature"], 0.05)
-        self.assertEqual(captured["payload"]["format"], {"type": "object"})
+
+    def test_generate_wraps_timeout(self) -> None:
+        client = OllamaClient("http://localhost:11434", "gemma4:e4b")
+
+        def fake_urlopen(_request: object, timeout: int) -> object:
+            raise TimeoutError("timed out")
+
+        with (
+            patch("urllib.request.urlopen", fake_urlopen),
+            self.assertRaisesRegex(OllamaError, "timed out after 3s"),
+        ):
+            client.generate_with_stats(
+                "prompt",
+                OllamaOptions(
+                    num_ctx=8192,
+                    num_predict=1800,
+                    temperature=0.05,
+                    timeout=3,
+                ),
+            )
 
 
 if __name__ == "__main__":

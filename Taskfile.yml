@@ -62,9 +62,11 @@ tasks:
       - task: build
 
   pr:create:
-    desc: Create current branch PR as draft if not exist yet.
+    desc: Push current branch and create a draft PR if not already exists, then print PR URL
     cmds:
-      - gh pr create --draft --fill
+      - |
+        git push -u origin HEAD
+        gh pr view $(git branch --show-current) --json url --jq '.url' || gh pr create --draft --fill
 
   pr:summary:
     desc: Generate current branch PR title and description with Shippy
@@ -76,14 +78,15 @@ tasks:
     cmds:
       - uv run -m shippy.cli review
 
+  pr:open:
+    desc: Open current branch PR in browser
+    cmds:
+      - gh pr view --web
+
   pr:
     desc: Create or reuse draft PR, then summarize and review it
     cmds:
       - task: pr:create
       - task: pr:summary
       - task: pr:review
-
-  pr:ready:
-    desc: Mark current branch PR ready for review
-    cmds:
-      - gh pr ready
+      - task: pr:open

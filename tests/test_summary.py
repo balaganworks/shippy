@@ -10,13 +10,14 @@ from shippy.summary import (
     SummaryGroup,
     build_final_prompt,
     build_group_prompt,
+    clean_summary_body,
     collect_summary_context,
-    group_summary_markdown,
-    parse_json_object,
+    group_summary_text,
     parse_name_status,
     parse_summary_result,
     split_groups,
 )
+from shippy.workflow import context_ready_message, single_group_message
 
 
 class SummaryTest(unittest.TestCase):
@@ -78,8 +79,17 @@ class SummaryTest(unittest.TestCase):
         )
         group = SummaryGroup("src", ["src/file.py"], "diff --git", False)
 
-        self.assertIn("Return one JSON object", build_group_prompt(context, group))
-        self.assertIn("TITLE:", build_final_prompt(context, ["### src"]))
+        self.assertIn("Return plain text notes only", build_group_prompt(context, group))
+        self.assertIn("Important changes:", build_group_prompt(context, group))
+        self.assertIn(
+            "Return this exact plain-text shape",
+            build_final_prompt(context, ["### src"]),
+        )
+        self.assertIn(
+            "Grouped summaries from the earlier summary step:",
+            build_final_prompt(context, ["### src"]),
+        )
+        self.assertNotIn("PR branch:", build_final_prompt(context, ["### src"]))
 
     def test_parse_summary_result_requires_title_and_body(self) -> None:
         result = parse_summary_result("TITLE: feat: add thing\n\nBODY:\n## Summary\n- done")
@@ -107,14 +117,31 @@ class SummaryTest(unittest.TestCase):
 
         self.assertEqual(result["title"], "Ship thing")
 
-    def test_parse_json_object_accepts_wrapped_json(self) -> None:
-        self.assertEqual(parse_json_object('noise {"area": "src"} tail', "x"), {"area": "src"})
+    def test_parse_summary_result_cleans_body_spacing(self) -> None:
+        result = parse_summary_result(
+            "TITLE: feat: add thing\n\n"
+            "BODY:\n"
+            "## Summary\n"
+            "- added thing\n\n\n"
+            "## Risk\n"
+            "- small migration risk\n"
+        )
 
-    def test_group_summary_markdown_fills_empty_lists(self) -> None:
-        text = group_summary_markdown({"area": "src", "summary": "changed code"}, "fallback")
+        self.assertEqual(result["title"], "feat: add thing")
+        self.assertEqual(
+            result["body"],
+            "## Summary\n- added thing\n\n## Risk\n- small migration risk",
+        )
 
-        self.assertIn("### src", text)
-        self.assertIn("- none visible", text)
+    def test_clean_summary_body_collapses_blank_lines(self) -> None:
+        body = clean_summary_body("## Summary\n- done\n\n\n## Validation\n- uv run tests")
+
+        self.assertEqual(body, "## Summary\n- done\n\n## Validation\n- uv run tests")
+
+    def test_group_summary_text_wraps_area_notes(self) -> None:
+        text = group_summary_text("- changed code", "src")
+
+        self.assertEqual(text, "### src\n\n- changed code")
 
     def test_parse_name_status_uses_destination_for_renames(self) -> None:
         files = parse_name_status("M\tsrc/a.py\nR100\told.py\tnew.py")
@@ -125,6 +152,26 @@ class SummaryTest(unittest.TestCase):
         groups = split_groups([("M", "src/a.py"), ("M", "tests/test_a.py")], max_groups=15)
 
         self.assertEqual(groups, [("src", ["src/a.py"]), ("tests", ["tests/test_a.py"])])
+
+    def test_shared_context_messages_are_action_agnostic(self) -> None:
+        context = SummaryContext(
+            base="main",
+            branch="feat/x",
+            commits="abc change",
+            stat="file.py | 1 +",
+            name_status="M\tsrc/a.py\nM\ttests/test_a.py",
+            ignores=[],
+            groups=[SummaryGroup("all changes", ["src/a.py"], "diff", False)],
+        )
+
+        self.assertEqual(
+            context_ready_message(context, "review"),
+            "📦 Context ready: 2 files, 1 review group",
+        )
+        self.assertEqual(
+            single_group_message("summary"),
+            "➡️  Single summary group — skipping parallel workers",
+        )
 
     def test_collect_summary_context_uses_ignores_and_trims_group_diff(self) -> None:
         config = SummaryConfig(
@@ -176,6 +223,105 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(context.branch, "feat/x")
         self.assertEqual(context.groups[0].diff, "0123456789\n\n[group diff truncated]\n")
         self.assertTrue(any(":(exclude)dist/**" in cmd for cmd in commands))
+
+    def test_collect_summary_context_keeps_small_pr_in_one_group(self) -> None:
+        config = SummaryConfig(
+            model="gemma4:e4b",
+            api_base="http://localhost:11434",
+            num_ctx=8192,
+            max_group_chars=100,
+            max_groups=15,
+            summary_tokens=900,
+            final_tokens=1800,
+            temperature=0.1,
+            workers=5,
+            timeout=420,
+            ignores=[],
+            title=TitleConfig(update=True, enforce_prefix=True, prefixes=["feat:"]),
+            split_group_prompt="",
+            final_prompt="",
+            split_group_extra_instructions="",
+            final_extra_instructions="",
+        )
+
+        def fake_run(cmd: list[str], cwd: Path, check: bool = True) -> str:
+            joined = " ".join(cmd)
+            if "defaultBranchRef" in joined:
+                return "main"
+            if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+                return "feat/x"
+            if cmd[:2] == ["git", "merge-base"]:
+                return "base-sha"
+            if "--name-status" in cmd:
+                return "M\tsrc/a.py\nM\ttests/test_a.py"
+            if "--stat" in cmd:
+                return "src/a.py | 1 +"
+            if cmd[:2] == ["git", "log"]:
+                return "abc change"
+            if cmd[:2] == ["git", "diff"]:
+                return "small diff"
+            raise AssertionError(cmd)
+
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch("shippy.summary.engine.run", fake_run),
+        ):
+            context = collect_summary_context(Path("."), config)
+
+        self.assertEqual(len(context.groups), 1)
+        self.assertEqual(context.groups[0].name, "all changes")
+        self.assertEqual(context.groups[0].diff, "small diff")
+
+    def test_collect_summary_context_splits_large_folder_before_trimming(self) -> None:
+        config = SummaryConfig(
+            model="gemma4:e4b",
+            api_base="http://localhost:11434",
+            num_ctx=8192,
+            max_group_chars=20,
+            max_groups=15,
+            summary_tokens=900,
+            final_tokens=1800,
+            temperature=0.1,
+            workers=5,
+            timeout=420,
+            ignores=[],
+            title=TitleConfig(update=True, enforce_prefix=True, prefixes=["feat:"]),
+            split_group_prompt="",
+            final_prompt="",
+            split_group_extra_instructions="",
+            final_extra_instructions="",
+        )
+
+        def fake_run(cmd: list[str], cwd: Path, check: bool = True) -> str:
+            joined = " ".join(cmd)
+            if "defaultBranchRef" in joined:
+                return "main"
+            if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+                return "feat/x"
+            if cmd[:2] == ["git", "merge-base"]:
+                return "base-sha"
+            if "--name-status" in cmd:
+                return "M\tsrc/a.py\nM\tsrc/b.py"
+            if "--stat" in cmd:
+                return "src/a.py | 1 +\nsrc/b.py | 1 +"
+            if cmd[:2] == ["git", "log"]:
+                return "abc change"
+            if cmd[:2] == ["git", "diff"] and cmd[-1] == "src/a.py":
+                return "diff a"
+            if cmd[:2] == ["git", "diff"] and cmd[-1] == "src/b.py":
+                return "diff b"
+            if cmd[:2] == ["git", "diff"]:
+                return "diff a\n\nthis whole group is too large\n\ndiff b"
+            raise AssertionError(cmd)
+
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch("shippy.summary.engine.run", fake_run),
+        ):
+            context = collect_summary_context(Path("."), config)
+
+        self.assertEqual([group.paths for group in context.groups], [["src/a.py", "src/b.py"]])
+        self.assertFalse(any(group.trimmed for group in context.groups))
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from math import ceil
@@ -17,9 +17,10 @@ from shippy.prompts import append_extra_instructions, render_prompt
 @dataclass(frozen=True)
 class WorkGroup:
     name: str
-    paths: list[str]
+    paths: Sequence[str]
     diff: str
     trimmed: bool
+    truncations: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,7 @@ class WorkContext:
     commits: str
     stat: str
     ignores: list[str]
-    groups: list[WorkGroup]
+    groups: Sequence[WorkGroup]
     name_status: str = ""
 
 
@@ -71,18 +72,43 @@ def collect_work_context(
     name_status = runner(
         ["git", "diff", "--name-status", commit_range, "--", *pathspec], repo_root, True
     )
+    full_diff = runner(
+        ["git", "diff", f"--unified={unified}", commit_range, "--", *pathspec],
+        repo_root,
+        True,
+    )
+    if len(full_diff) <= max_group_chars:
+        return WorkContext(
+            base=base,
+            branch=branch,
+            commits=commits,
+            stat=stat,
+            name_status=name_status,
+            ignores=ignores,
+            groups=[
+                WorkGroup(
+                    name="all changes",
+                    paths=[path for _, path in parse_name_status(name_status)],
+                    diff=full_diff,
+                    trimmed=False,
+                )
+            ],
+        )
+
     groups = []
     for name, paths in split_groups(parse_name_status(name_status), max_groups):
-        diff_paths = paths or pathspec
-        diff = runner(
-            ["git", "diff", f"--unified={unified}", commit_range, "--", *diff_paths],
-            repo_root,
-            True,
+        groups.extend(
+            build_sized_groups(
+                name,
+                paths,
+                repo_root=repo_root,
+                commit_range=commit_range,
+                unified=unified,
+                max_group_chars=max_group_chars,
+                truncation_marker=truncation_marker,
+                runner=runner,
+            )
         )
-        trimmed = len(diff) > max_group_chars
-        if trimmed:
-            diff = diff[:max_group_chars] + f"\n\n{truncation_marker}\n"
-        groups.append(WorkGroup(name=name, paths=paths, diff=diff, trimmed=trimmed))
 
     return WorkContext(
         base=base,
@@ -93,6 +119,80 @@ def collect_work_context(
         ignores=ignores,
         groups=groups,
     )
+
+
+def build_sized_groups(
+    name: str,
+    paths: list[str],
+    *,
+    repo_root: Path,
+    commit_range: str,
+    unified: int,
+    max_group_chars: int,
+    truncation_marker: str,
+    runner: Callable[[list[str], Path, bool], str],
+) -> list[WorkGroup]:
+    if not paths:
+        diff = runner(
+            ["git", "diff", f"--unified={unified}", commit_range, "--", "."],
+            repo_root,
+            True,
+        )
+        return [trimmed_group(name, [], diff, max_group_chars, truncation_marker)]
+
+    groups: list[WorkGroup] = []
+    current_paths: list[str] = []
+    current_parts: list[str] = []
+
+    def flush() -> None:
+        if not current_paths:
+            return
+        group_name = numbered_group_name(name, len(groups) + 1)
+        groups.append(WorkGroup(group_name, list(current_paths), "\n\n".join(current_parts), False))
+        current_paths.clear()
+        current_parts.clear()
+
+    for path in paths:
+        diff = runner(
+            ["git", "diff", f"--unified={unified}", commit_range, "--", path],
+            repo_root,
+            True,
+        )
+        if len(diff) > max_group_chars:
+            flush()
+            groups.append(trimmed_group(path, [path], diff, max_group_chars, truncation_marker))
+            continue
+
+        next_size = len("\n\n".join([*current_parts, diff]))
+        if current_parts and next_size > max_group_chars:
+            flush()
+        current_paths.append(path)
+        current_parts.append(diff)
+
+    flush()
+    return groups
+
+
+def numbered_group_name(name: str, number: int) -> str:
+    return name if number == 1 else f"{name} #{number}"
+
+
+def trimmed_group(
+    name: str,
+    paths: Sequence[str],
+    diff: str,
+    max_group_chars: int,
+    truncation_marker: str,
+) -> WorkGroup:
+    if len(diff) <= max_group_chars:
+        return WorkGroup(name, paths, diff, False)
+    kept = diff[:max_group_chars]
+    total_lines = len(diff.splitlines())
+    kept_lines = len(kept.splitlines())
+    suffix = f"\n\n{truncation_marker}\n" if truncation_marker else ""
+    target = paths[0] if paths else name
+    truncation = f"{target}: kept first {kept_lines} of {total_lines} diff lines"
+    return WorkGroup(name, paths, kept + suffix, True, [truncation])
 
 
 def parse_name_status(output: str) -> list[tuple[str, str]]:
@@ -144,7 +244,7 @@ def split_groups(files: list[tuple[str, str]], max_groups: int) -> list[tuple[st
     return sorted(keep)
 
 
-def run_workers(items: list[WorkGroup], workers: int, job: Callable[[WorkGroup], T]) -> list[T]:
+def run_workers(items: Sequence[WorkGroup], workers: int, job: Callable[[WorkGroup], T]) -> list[T]:
     if workers < 1:
         raise ValueError("workers must be greater than 0")
     results = []
@@ -155,7 +255,28 @@ def run_workers(items: list[WorkGroup], workers: int, job: Callable[[WorkGroup],
     return results
 
 
-def bullet_list(values: list[str]) -> str:
+def context_ready_message(context: WorkContext, action: str) -> str:
+    file_count = len(parse_name_status(context.name_status))
+    group_count = len(context.groups)
+    group_label = "group" if group_count == 1 else "groups"
+    trimmed = sum(group.trimmed for group in context.groups)
+    suffix = f", {trimmed} truncated" if trimmed else ""
+    return f"📦 Context ready: {file_count} files, {group_count} {action} {group_label}{suffix}"
+
+
+def truncation_messages(context: WorkContext) -> list[str]:
+    return [
+        f"⚠️  Truncated diff: {truncation}"
+        for group in context.groups
+        for truncation in group.truncations
+    ]
+
+
+def single_group_message(action: str) -> str:
+    return f"➡️  Single {action} group — skipping parallel workers"
+
+
+def bullet_list(values: Sequence[str]) -> str:
     return "\n".join(f"- {value}" for value in values)
 
 

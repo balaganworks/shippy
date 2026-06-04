@@ -23,7 +23,7 @@ ignores = [
 context_window = 8192
 
 # Max diff characters sent to each split-group worker.
-# 16k chars is roughly a few thousand tokens, leaving room for prompt and output.
+# Shippy first tries the whole PR in one worker. It splits only when this cap is exceeded.
 max_group_chars = 16000
 
 # Upper bound on parallel chunks. Big PRs may merge smaller chunks into one mixed group.
@@ -45,7 +45,7 @@ timeout_seconds = 420
 # Provider context per model call. Same model, same window.
 context_window = 8192
 
-# Review needs enough diff per worker, but not so much that findings lose focus.
+# Shippy first tries the whole PR in one worker. It splits only when this cap is exceeded.
 max_group_chars = 16000
 max_groups = 12
 workers = 4
@@ -70,7 +70,7 @@ prefixes = ["feat:", "task:", "fix:", "hotfix:", "chore:", "docs:", "refactor:"]
 #
 # Available tokens:
 # summary_split_group: {{area}}, {{branch}}, {{base}}, {{ignored_paths}}, {{files}}, {{diff}}
-# summary_final: {{branch}}, {{base}}, {{commits}}, {{stat}}, {{area_summaries}}, {{title_prefixes}}, {{title_update}}, {{title_enforce_prefix}}
+# summary_final: {{branch}}, {{base}}, {{commits}}, {{stat}}, {{area_summaries}}, {{title_prefixes}}, {{title_update}}, {{title_enforce_prefix}}, {{title_shape}}, {{title_rules}}
 # review_split_group: {{area}}, {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{files}}, {{diff}}, {{trim_note}}
 # review_final: {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{changed_files}}, {{diff}}, {{area_reviews}}, {{trim_note}}
 summary_split_group = ""

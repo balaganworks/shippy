@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -24,9 +25,11 @@ from shippy.workflow import (
     WorkContext,
     WorkGroup,
     collect_work_context,
-    parse_name_status,
+    context_ready_message,
     render_configured_prompt,
     run_workers,
+    single_group_message,
+    truncation_messages,
     work_group_values,
 )
 
@@ -41,7 +44,7 @@ class ReviewGroup(WorkGroup):
 
 @dataclass(frozen=True)
 class ReviewContext(WorkContext):
-    groups: list[ReviewGroup]
+    groups: Sequence[ReviewGroup]
 
 
 def say(message: str) -> None:
@@ -63,12 +66,14 @@ def review_pull_request(
     comment_id = github.upsert_comment(context, pending_body(), comment_id)
 
     try:
-        say("Collecting PR review context...")
+        say("🧭 Collecting PR review context...")
         review_context = collect_review_context(repo_root, config)
-        say(_context_message(review_context))
+        say(context_ready_message(review_context, "review"))
+        for message in truncation_messages(review_context):
+            say(message)
         area_reviews = review_groups(ollama, review_context, pr, config)
-        say(f"Asking {config.model} for final markdown review...")
-        markdown = ollama.generate(
+        say(f"📝 Asking {config.model} for final markdown review...")
+        result = ollama.generate_with_stats(
             prompt=build_review_prompt(
                 review_context,
                 pr,
@@ -83,13 +88,16 @@ def review_pull_request(
                 timeout=config.timeout,
             ),
         )
-        github.upsert_comment(context, normalize_review(markdown), comment_id)
+        usage = result.usage_text()
+        if usage:
+            say(f"📊 Final review tokens: {usage}")
+        github.upsert_comment(context, normalize_review(result.text), comment_id)
     except Exception as error:
         body = failure_body(f"{type(error).__name__}: {error}")
         github.upsert_comment(context, body, comment_id)
         return
 
-    say("Updated PR review comment")
+    say("✅ Updated PR review comment")
 
 
 def collect_review_context(repo_root: Path, config: ReviewConfig) -> ReviewContext:
@@ -102,7 +110,8 @@ def collect_review_context(repo_root: Path, config: ReviewConfig) -> ReviewConte
         truncation_marker="[review group diff truncated]",
     )
     groups = [
-        ReviewGroup(group.name, group.paths, group.diff, group.trimmed) for group in context.groups
+        ReviewGroup(group.name, group.paths, group.diff, group.trimmed, group.truncations)
+        for group in context.groups
     ]
     return ReviewContext(
         base=context.base,
@@ -121,10 +130,14 @@ def review_groups(
     pr: PullRequest,
     config: ReviewConfig,
 ) -> list[str]:
-    say(f"Reviewing {len(context.groups)} groups with {config.workers} workers...")
+    if len(context.groups) == 1:
+        say(single_group_message("review"))
+        return []
+
+    say(f"🧩 Reviewing {len(context.groups)} groups with {config.workers} parallel workers...")
 
     def review(group: ReviewGroup) -> str:
-        return ollama.generate(
+        result = ollama.generate_with_stats(
             build_review_group_prompt(
                 context,
                 group,
@@ -138,7 +151,11 @@ def review_groups(
                 temperature=config.temperature,
                 timeout=config.timeout,
             ),
-        ).strip()
+        )
+        usage = result.usage_text()
+        if usage:
+            say(f"📊 Review group {group.name}: {usage}")
+        return result.text.strip()
 
     reviews = run_workers(context.groups, config.workers, review)
     reviews.sort()
@@ -153,9 +170,9 @@ def build_review_group_prompt(
     extra_instructions: str = "",
 ) -> str:
     trim_note = (
-        "This area diff was truncated. Say that in Notes."
+        "Some diff context was truncated; review only visible context."
         if group.trimmed
-        else "This area diff was complete."
+        else "Use the available diff context."
     )
     values = work_group_values(context, group)
     values.update(
@@ -188,11 +205,10 @@ def build_review_prompt(
 ) -> str:
     groups = getattr(context, "groups", [])
     trim_note = (
-        "One or more area diffs were truncated. Say that in Reviewer Notes."
-        if groups and any(group.trimmed for group in groups)
-        else "Diff was truncated. Say that in Reviewer Notes."
-        if getattr(context, "trimmed", False)
-        else "Diff was complete."
+        "Some diff context was truncated; review only visible context."
+        if (groups and any(group.trimmed for group in groups))
+        or (not groups and getattr(context, "trimmed", False))
+        else "Use the available review notes and diff context."
     )
     diff = "\n\n".join(group.diff for group in groups) if groups else getattr(context, "diff", "")
     values = {
@@ -236,11 +252,3 @@ def pending_body() -> str:
 
 def failure_body(reason: str) -> str:
     return REVIEW_FAILURE_BODY_TEMPLATE.format(reason=reason.strip() or UNKNOWN_FAILURE)
-
-
-def _context_message(context: ReviewContext) -> str:
-    file_count = len(parse_name_status(context.name_status))
-    group_count = len(context.groups)
-    trimmed_count = sum(group.trimmed for group in context.groups)
-    status = f"{trimmed_count} trimmed" if trimmed_count else "complete"
-    return f"Context ready: {file_count} files, {group_count} groups, diff {status}"

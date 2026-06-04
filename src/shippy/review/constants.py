@@ -29,35 +29,22 @@ REVIEW_FAILURE_BODY_TEMPLATE = f"""{COMMENT_MARKER}
 
 DEFAULT_REVIEW_GROUP_PROMPT_TEMPLATE = """Review one area of a GitHub PR.
 
-Return Markdown only. No YAML. No JSON. No code fence wrapping the whole answer.
+Return short Markdown notes.
 
-Required shape:
+Shape:
 ### {{area}}
-
+Verdict: Pass or Fail
 Findings:
-- If pass: write exactly `{{no_blocking_issues}}`
-- If failed: write 1-3 actionable findings.
-- Each finding must include:
-  - changed file path
-  - relevant line or small line range if visible
-  - what breaks
-  - exact fix direction
-
+- For Pass, write exactly `{{no_blocking_issues}}`
+- For Fail, write 1-3 fix bullets with path, visible line if available, bug, and fix direction.
 Tests:
-- Mention only tests or validation visible in this area diff.
-- If none visible, write `{{no_validation_visible}}`
-
-Notes:
-- 1-3 bullets with source-of-truth, risk, edge case, or follow-up context.
-- No generic advice.
+- Mention visible tests or write `{{no_validation_visible}}`
 
 Rules:
-- Review only concrete bugs, security issues, data-loss risks,
-  broken contracts, or meaningful performance issues introduced by the diff.
-- Prefer pass over weak speculation.
+- Review concrete bugs, security issues, data-loss risks, broken contracts,
+  and meaningful performance issues.
+- Prefer Pass for weak or speculative concerns.
 - Be blunt, concise, and actionable.
-- Do not praise.
-- Do not include a table.
 - Refer only to changed files and relevant sources.
 - {{trim_note}}
 
@@ -82,45 +69,35 @@ Area diff:
 {{diff}}
 """
 
-DEFAULT_REVIEW_FINAL_PROMPT_TEMPLATE = f"""Write a GitHub PR review.
+DEFAULT_REVIEW_FINAL_PROMPT_TEMPLATE = f"""Write a concise GitHub PR review.
 
-Use the area review notes below as source context.
+Use the review notes and diff below as source context.
 
-Return Markdown only. No YAML. No JSON. No code fence wrapping the whole answer.
+Return Markdown only.
 
-Required shape:
+Pass shape:
 {AI_REVIEW_HEADING}
 
 ### Verdict
-✅ Pass: one short reason
+✅ Pass: one short reason.
 
-or
-
+Fail shape:
+{AI_REVIEW_HEADING}
 ### Verdict
-❌ Failed: one short reason
-
-### Summary
-- 2-4 bullets max.
-- Each bullet must be short and concrete.
+❌ Failed: one short reason.
 
 ### Findings
-- If all area findings passed: write exactly `{NO_BLOCKING_ISSUES}`
-- If failed: write the strongest 1-5 actionable findings.
+- 1-5 fix bullets max.
 
 ### Tests
-- Mention only tests or validation visible in PR context.
-- If none visible, write `{NO_VALIDATION_VISIBLE}`
-
-### Reviewer Notes
-- 1-4 bullets with source-of-truth, risk, edge case, or follow-up context.
-- No generic advice.
+- Visible validation, or `{NO_VALIDATION_VISIBLE}`
 
 Rules:
+- If pass, write only Verdict and one short Tests section.
+- If fail, write Verdict, Findings, and Tests.
 - Deduplicate overlapping area findings.
 - Prefer Pass over weak speculation.
 - Be blunt, concise, and actionable.
-- Do not praise.
-- Do not include a table.
 - {{{{trim_note}}}}
 
 PR title: {{{{pr_title}}}}
@@ -142,4 +119,7 @@ Changed files:
 
 Area reviews:
 {{{{area_reviews}}}}
+
+Diff:
+{{{{diff}}}}
 """
