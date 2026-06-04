@@ -172,7 +172,7 @@ See the full editable config template here: [`src/shippy/templates/.shippy.toml`
 
 Leave prompt fields empty to use Shippy defaults. Set a field to replace that
 prompt completely. Use `[extra_instructions]` to keep the default prompt and
-append local rules.
+append custom rules.
 
 `split_group` means: **prompt for one chunk of changed files**.
 

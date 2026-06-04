@@ -78,14 +78,15 @@ tasks:
     cmds:
       - uv run -m shippy.cli review
 
+  pr:open:
+    desc: Open current branch PR in browser
+    cmds:
+      - gh pr view --web
+
   pr:
     desc: Create or reuse draft PR, then summarize and review it
     cmds:
       - task: pr:create
       - task: pr:summary
       - task: pr:review
-
-  pr:open:
-    desc: Open current branch PR in browser
-    cmds:
-      - gh pr view --web
+      - task: pr:open
