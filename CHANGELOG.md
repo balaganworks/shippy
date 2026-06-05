@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Fixes CLI version output to use package metadata.
+
 ## 0.1.1
 
 - Improves PR summary Markdown prompting and plain-text customization.
