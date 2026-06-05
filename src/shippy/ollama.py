@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
 from shippy.errors import OllamaError
+
+MAX_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,7 @@ class GenerateResult:
     text: str
     prompt_tokens: int | None = None
     output_tokens: int | None = None
+    attempts: int = 1
 
     def usage_text(self) -> str:
         parts = []
@@ -60,6 +64,16 @@ class OllamaClient:
         return self.generate_with_stats(prompt, options).text
 
     def generate_with_stats(self, prompt: str, options: OllamaOptions) -> GenerateResult:
+        for attempt in range(1, MAX_ATTEMPTS):
+            try:
+                return with_attempts(self._generate_once(prompt, options), attempt)
+            except OllamaError as error:
+                if not is_retryable(error):
+                    raise
+                time.sleep(0.5 * attempt)
+        return with_attempts(self._generate_once(prompt, options), MAX_ATTEMPTS)
+
+    def _generate_once(self, prompt: str, options: OllamaOptions) -> GenerateResult:
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -99,6 +113,24 @@ class OllamaClient:
             prompt_tokens=_int_or_none(data.get("prompt_eval_count")),
             output_tokens=output_tokens,
         )
+
+
+def is_retryable(error: OllamaError) -> bool:
+    message = str(error).lower()
+    return (
+        "timed out" in message
+        or "empty response" in message
+        or "temporarily unavailable" in message
+    )
+
+
+def with_attempts(result: GenerateResult, attempts: int) -> GenerateResult:
+    return GenerateResult(
+        text=result.text,
+        prompt_tokens=result.prompt_tokens,
+        output_tokens=result.output_tokens,
+        attempts=attempts,
+    )
 
 
 def _int_or_none(value: object) -> int | None:

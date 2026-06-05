@@ -14,13 +14,18 @@ from shippy.ollama import GenerateResult, OllamaClient, OllamaOptions
 from shippy.review.constants import (
     AI_REVIEW_HEADING,
     COMMENT_MARKER,
+    CONTEXT_ESCAPE_PHRASES,
     DEFAULT_REVIEW_FINAL_PROMPT_TEMPLATE,
     DEFAULT_REVIEW_GROUP_PROMPT_TEMPLATE,
     NO_BLOCKING_ISSUES,
+    NO_REVIEW_TEXT,
     NO_VALIDATION_VISIBLE,
     REVIEW_FAILURE_BODY_TEMPLATE,
     REVIEW_PENDING_BODY,
+    REVIEW_RESULT_PREFIXES,
+    REVIEW_VERDICT_HEADING,
     UNKNOWN_FAILURE,
+    UNSTRUCTURED_REVIEW_TEMPLATE,
 )
 from shippy.workflow import (
     WorkContext,
@@ -141,10 +146,11 @@ def final_review(
         result.text,
         prompt_tokens=result.prompt_tokens,
         output_tokens=result.output_tokens,
+        attempts=retry_count(result),
     )
     usage = result.usage_text()
     if usage:
-        say(f"📊 Final review tokens: {usage}")
+        say(f"✅ Finished final review: {usage}{attempt_text(result)}")
     return result
 
 
@@ -236,10 +242,11 @@ def review_groups(
                 group=group.name,
                 prompt_tokens=result.prompt_tokens,
                 output_tokens=result.output_tokens,
+                attempts=retry_count(result),
             )
         usage = result.usage_text()
         if usage:
-            say(f"📊 Review group {group.name}: {usage}")
+            say(f"✅ Finished review group {group.name}: {usage}{attempt_text(result)}")
         return result.text.strip()
 
     reviews = run_workers(context.groups, config.workers, review)
@@ -255,6 +262,14 @@ def group_log(group: ReviewGroup | WorkGroup) -> dict[str, object]:
         "diff_chars": len(group.diff),
         "truncations": group.truncations,
     }
+
+
+def retry_count(result: GenerateResult) -> int | None:
+    return result.attempts if result.attempts > 1 else None
+
+
+def attempt_text(result: GenerateResult) -> str:
+    return f", attempts {result.attempts}" if result.attempts > 1 else ""
 
 
 def build_review_group_prompt(
@@ -306,6 +321,7 @@ def build_review_prompt(
         else "Use the available review notes and diff context."
     )
     diff = "\n\n".join(group.diff for group in groups) if groups else getattr(context, "diff", "")
+    review_context = area_reviews.strip() or diff
     values = {
         "pr_title": pr.title,
         "pr_url": pr.url,
@@ -317,6 +333,7 @@ def build_review_prompt(
         "changed_files": context.name_status,
         "diff": diff,
         "area_reviews": area_reviews,
+        "review_context": review_context,
         "trim_note": trim_note,
     }
     return render_configured_prompt(
@@ -336,9 +353,33 @@ def normalize_review(markdown: str) -> str:
         if lines and lines[-1].startswith("```"):
             lines = lines[:-1]
         text = "\n".join(lines).strip()
+    text = repair_review_shape(text)
     if not text.startswith(AI_REVIEW_HEADING):
         text = f"{AI_REVIEW_HEADING}\n\n" + text
     return f"{COMMENT_MARKER}\n{text}\n"
+
+
+def repair_review_shape(markdown: str) -> str:
+    text = strip_context_requests(markdown.strip())
+    if is_structured_review(text):
+        return text
+    return UNSTRUCTURED_REVIEW_TEMPLATE.format(review_text=text or NO_REVIEW_TEXT).strip()
+
+
+def is_structured_review(markdown: str) -> bool:
+    lowered = markdown.lower()
+    has_verdict = REVIEW_VERDICT_HEADING.lower() in lowered
+    has_result = any(prefix.lower() in lowered for prefix in REVIEW_RESULT_PREFIXES)
+    return has_verdict and has_result
+
+
+def strip_context_requests(markdown: str) -> str:
+    lines = [
+        line
+        for line in markdown.splitlines()
+        if not any(phrase in line.lower() for phrase in CONTEXT_ESCAPE_PHRASES)
+    ]
+    return "\n".join(lines).strip()
 
 
 def pending_body() -> str:

@@ -4,22 +4,40 @@ from __future__ import annotations
 
 COMMENT_MARKER = "<!-- shippy-review -->"
 AI_REVIEW_HEADING = "## AI Review"
+REVIEW_VERDICT_HEADING = "### Verdict"
+REVIEW_FINDINGS_HEADING = "### Findings"
+REVIEW_PASS_PREFIX = "✅ Pass"
+REVIEW_FAILED_PREFIX = "❌ Failed"
+REVIEW_RESULT_PREFIXES = (REVIEW_PASS_PREFIX, REVIEW_FAILED_PREFIX)
 NO_BLOCKING_ISSUES = "- No blocking issues found."
 NO_VALIDATION_VISIBLE = "- No validation visible in PR context."
 UNKNOWN_FAILURE = "unknown failure"
+NO_REVIEW_TEXT = "- No review text returned."
+UNSTRUCTURED_REVIEW_REASON = "❌ Failed: review output was incomplete."
+CONTEXT_ESCAPE_PHRASES = (
+    "provide the specific file",
+    "exact changes you want me to review",
+    "provide more context",
+)
+UNSTRUCTURED_REVIEW_TEMPLATE = f"""{REVIEW_VERDICT_HEADING}
+{UNSTRUCTURED_REVIEW_REASON}
+
+{REVIEW_FINDINGS_HEADING}
+{{review_text}}
+"""
 
 REVIEW_PENDING_BODY = f"""{COMMENT_MARKER}
 {AI_REVIEW_HEADING}
 
-### Verdict
+{REVIEW_VERDICT_HEADING}
 ⏳ Running: AI review in progress.
 """
 
 REVIEW_FAILURE_BODY_TEMPLATE = f"""{COMMENT_MARKER}
 {AI_REVIEW_HEADING}
 
-### Verdict
-❌ Failed: AI review did not complete.
+{REVIEW_VERDICT_HEADING}
+{REVIEW_FAILED_PREFIX}: AI review did not complete.
 
 ### Error
 ```text
@@ -27,40 +45,22 @@ REVIEW_FAILURE_BODY_TEMPLATE = f"""{COMMENT_MARKER}
 ```
 """
 
-DEFAULT_REVIEW_GROUP_PROMPT_TEMPLATE = """Review one area of a GitHub PR.
+DEFAULT_REVIEW_GROUP_PROMPT_TEMPLATE = """Review this PR area.
 
-Return short Markdown notes.
-
-Shape:
+Output:
 ### {{area}}
 Verdict: Pass or Fail
 Findings:
-- For Pass, write exactly `{{no_blocking_issues}}`
-- For Fail, write 1-3 fix bullets with path, visible line if available, bug, and fix direction.
+- Pass: write `{{no_blocking_issues}}`
+- Fail: 1-3 bullets like `path: bug -> fix`.
 Tests:
-- Mention visible tests or write `{{no_validation_visible}}`
+- Visible validation, or write `{{no_validation_visible}}`
 
-Rules:
-- Review concrete bugs, security issues, data-loss risks, broken contracts,
-  and meaningful performance issues.
-- Prefer Pass for weak or speculative concerns.
-- Be blunt, concise, and actionable.
-- Refer only to changed files and relevant sources.
-- {{trim_note}}
+Focus on real bugs, security, data loss, broken contracts, and meaningful perf.
+Prefer Pass when uncertain. Keep bullets small and actionable.
+{{trim_note}}
 
 PR title: {{pr_title}}
-PR URL: {{pr_url}}
-Branch: {{branch}}
-Base branch: {{base}}
-
-PR description:
-{{pr_body}}
-
-Commits:
-{{commits}}
-
-Diff stat:
-{{stat}}
 
 Files in this area:
 {{files}}
@@ -71,55 +71,26 @@ Area diff:
 
 DEFAULT_REVIEW_FINAL_PROMPT_TEMPLATE = f"""Write a concise GitHub PR review.
 
-Use the review notes and diff below as source context.
-
-Return Markdown only.
-
-Pass shape:
-{AI_REVIEW_HEADING}
-
-### Verdict
-✅ Pass: one short reason.
-
-Fail shape:
+Output Markdown:
 {AI_REVIEW_HEADING}
 ### Verdict
-❌ Failed: one short reason.
-
+Choose one:
+✅ Pass: short reason.
+❌ Failed: short reason.
 ### Findings
-- 1-5 fix bullets max.
-
+- only for Failed; 1-5 bullets like `path: bug -> fix`
 ### Tests
-- Visible validation, or `{NO_VALIDATION_VISIBLE}`
+- visible validation, or `{NO_VALIDATION_VISIBLE}`
 
-Rules:
-- If pass, write only Verdict and one short Tests section.
-- If fail, write Verdict, Findings, and Tests.
-- Deduplicate overlapping area findings.
-- Prefer Pass over weak speculation.
-- Be blunt, concise, and actionable.
-- {{{{trim_note}}}}
+Use Failed only for concrete blocking issues from the context.
+Otherwise use Pass. Deduplicate findings. Keep it short.
+{{{{trim_note}}}}
 
-PR title: {{{{pr_title}}}}
-PR URL: {{{{pr_url}}}}
-Branch: {{{{branch}}}}
-Base branch: {{{{base}}}}
-
-PR description:
-{{{{pr_body}}}}
-
-Commits:
-{{{{commits}}}}
-
-Diff stat:
-{{{{stat}}}}
+PR: {{{{pr_title}}}}
 
 Changed files:
 {{{{changed_files}}}}
 
-Area reviews:
-{{{{area_reviews}}}}
-
-Diff:
-{{{{diff}}}}
+Review context:
+{{{{review_context}}}}
 """
