@@ -79,14 +79,14 @@ class SummaryTest(unittest.TestCase):
         )
         group = SummaryGroup("src", ["src/file.py"], "diff --git", False)
 
-        self.assertIn("Return plain text notes only", build_group_prompt(context, group))
+        self.assertIn("Output notes:", build_group_prompt(context, group))
         self.assertIn("Important changes:", build_group_prompt(context, group))
         self.assertIn(
-            "Return this exact plain-text shape",
+            "Write GitHub PR metadata",
             build_final_prompt(context, ["### src"]),
         )
         self.assertIn(
-            "Grouped summaries from the earlier summary step:",
+            "Area summaries:",
             build_final_prompt(context, ["### src"]),
         )
         self.assertNotIn("PR branch:", build_final_prompt(context, ["### src"]))

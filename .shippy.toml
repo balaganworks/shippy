@@ -35,6 +35,7 @@ workers = 4
 # Lower = more deterministic. Summary can be slightly more flexible than review.
 temperature = 0.1
 timeout_seconds = 420
+split_group_output_tokens = 900
 
 [review]
 # Review uses the same split-group method as summary:
@@ -53,6 +54,7 @@ workers = 4
 # Review should be stricter and less creative.
 temperature = 0.05
 timeout_seconds = 420
+split_group_output_tokens = 900
 
 [title]
 # Set update = false to leave the current PR title untouched.
@@ -81,7 +83,7 @@ verbose = true
 # summary_split_group: {{area}}, {{branch}}, {{base}}, {{ignored_paths}}, {{files}}, {{diff}}
 # summary_final: {{branch}}, {{base}}, {{commits}}, {{stat}}, {{area_summaries}}, {{title_prefixes}}, {{title_update}}, {{title_enforce_prefix}}, {{title_shape}}, {{title_rules}}
 # review_split_group: {{area}}, {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{files}}, {{diff}}, {{trim_note}}
-# review_final: {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{changed_files}}, {{diff}}, {{area_reviews}}, {{trim_note}}
+# review_final: {{pr_title}}, {{pr_url}}, {{pr_body}}, {{branch}}, {{base}}, {{commits}}, {{stat}}, {{changed_files}}, {{diff}}, {{area_reviews}}, {{review_context}}, {{trim_note}}
 summary_split_group = ""
 summary_final = ""
 review_split_group = ""

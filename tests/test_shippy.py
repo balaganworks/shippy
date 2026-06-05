@@ -287,6 +287,7 @@ class OllamaTest(unittest.TestCase):
 
         self.assertEqual(result.text, "ok")
         self.assertEqual(result.usage_text(), "input 12, output 3")
+        self.assertEqual(result.attempts, 1)
         self.assertEqual(captured["url"], "http://localhost:11434/api/generate")
         self.assertEqual(captured["timeout"], 420)
         self.assertEqual(captured["payload"]["prompt"], "prompt")
@@ -302,6 +303,7 @@ class OllamaTest(unittest.TestCase):
 
         with (
             patch("urllib.request.urlopen", fake_urlopen),
+            patch("time.sleep", lambda _seconds: None),
             self.assertRaisesRegex(OllamaError, "timed out after 3s"),
         ):
             client.generate_with_stats(
@@ -313,6 +315,46 @@ class OllamaTest(unittest.TestCase):
                     timeout=3,
                 ),
             )
+
+    def test_generate_retries_timeout_then_succeeds(self) -> None:
+        calls = 0
+
+        class Response:
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"response": "ok", "eval_count": 3}).encode()
+
+        def fake_urlopen(_request: object, timeout: int) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise TimeoutError("timed out")
+            return Response()
+
+        client = OllamaClient("http://localhost:11434", "gemma4:e4b")
+
+        with (
+            patch("urllib.request.urlopen", fake_urlopen),
+            patch("time.sleep", lambda _seconds: None),
+        ):
+            result = client.generate_with_stats(
+                "prompt",
+                OllamaOptions(
+                    num_ctx=8192,
+                    num_predict=1800,
+                    temperature=0.05,
+                    timeout=3,
+                ),
+            )
+
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(result.attempts, 2)
+        self.assertEqual(calls, 2)
 
     def test_generate_rejects_empty_response(self) -> None:
         class Response:
@@ -329,6 +371,7 @@ class OllamaTest(unittest.TestCase):
 
         with (
             patch("urllib.request.urlopen", lambda *_args, **_kwargs: Response()),
+            patch("time.sleep", lambda _seconds: None),
             self.assertRaisesRegex(OllamaError, "empty response"),
         ):
             client.generate_with_stats(
@@ -340,6 +383,49 @@ class OllamaTest(unittest.TestCase):
                     timeout=3,
                 ),
             )
+
+    def test_generate_retries_empty_response_then_succeeds(self) -> None:
+        calls = 0
+
+        class Response:
+            def __init__(self, response: str) -> None:
+                self.response = response
+
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"response": self.response, "eval_count": 3}).encode()
+
+        def fake_urlopen(_request: object, timeout: int) -> object:
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                return Response("   ")
+            return Response("ok")
+
+        client = OllamaClient("http://localhost:11434", "gemma4:e4b")
+
+        with (
+            patch("urllib.request.urlopen", fake_urlopen),
+            patch("time.sleep", lambda _seconds: None),
+        ):
+            result = client.generate_with_stats(
+                "prompt",
+                OllamaOptions(
+                    num_ctx=8192,
+                    num_predict=1800,
+                    temperature=0.05,
+                    timeout=3,
+                ),
+            )
+
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(result.attempts, 3)
+        self.assertEqual(calls, 3)
 
 
 if __name__ == "__main__":

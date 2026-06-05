@@ -116,10 +116,11 @@ def final_summary(
         result.text,
         prompt_tokens=result.prompt_tokens,
         output_tokens=result.output_tokens,
+        attempts=retry_count(result),
     )
     usage = result.usage_text()
     if usage:
-        say(f"📊 Final summary tokens: {usage}")
+        say(f"✅ Finished final summary: {usage}{attempt_text(result)}")
     return result
 
 
@@ -217,10 +218,11 @@ def summarize_groups(
                 group=group.name,
                 prompt_tokens=output.prompt_tokens,
                 output_tokens=output.output_tokens,
+                attempts=retry_count(output),
             )
         usage = output.usage_text()
         if usage:
-            say(f"📊 Summary group {group.name}: {usage}")
+            say(f"✅ Finished summary group {group.name}: {usage}{attempt_text(output)}")
         return group_summary_text(output.text, group.name)
 
     summaries = run_workers(context.groups, config.workers, summarize)
@@ -236,6 +238,14 @@ def group_log(group: SummaryGroup | WorkGroup) -> dict[str, object]:
         "diff_chars": len(group.diff),
         "truncations": group.truncations,
     }
+
+
+def retry_count(result: GenerateResult) -> int | None:
+    return result.attempts if result.attempts > 1 else None
+
+
+def attempt_text(result: GenerateResult) -> str:
+    return f", attempts {result.attempts}" if result.attempts > 1 else ""
 
 
 def build_group_prompt(

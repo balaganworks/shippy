@@ -4,31 +4,22 @@ from __future__ import annotations
 
 DEFAULT_TITLE_PREFIXES = ["feat:", "task:", "fix:", "hotfix:", "chore:", "docs:", "refactor:"]
 
-DEFAULT_GROUP_PROMPT_TEMPLATE = """Summarize one area of a GitHub PR.
+DEFAULT_GROUP_PROMPT_TEMPLATE = """Summarize this PR area.
 
-Return plain text notes only. These notes are internal context for the final PR description.
-
-Use this loose note shape:
+Output notes:
 Area: {{area}}
-Summary: one sentence, 18 words max
+Summary: one short sentence
 Important changes:
-- 2-4 concise bullets max
+- 2-4 bullets
 Significant files:
 - up to 4 changed paths with why they matter
 Validation signals:
-- only checks visible in the diff
+- visible checks/tests only
 Risk signals:
-- only meaningful risks visible in this area
+- meaningful visible risks only
 
-Rules:
-- Be specific to this area.
-- Mention tests, rollout, production impact, or validation only when visible in the diff.
-- Prefer implemented behavior, contracts, data shape, migrations, and workflows over file lists.
-- Write in past tense. Focus on changed behavior.
-- If a section has no real items, omit it.
-- Be concise but detailed enough that a reviewer can route attention.
-- Use short bullets.
-- Include meaningful risks only when visible.
+Write past tense. Focus on behavior, contracts, data shape, workflows, and validation.
+Omit empty sections. Keep bullets short.
 
 PR branch: {{branch}}
 Base branch: {{base}}
@@ -43,37 +34,25 @@ Area diff:
 {{diff}}
 """
 
-DEFAULT_FINAL_PROMPT_TEMPLATE = """Write final GitHub PR metadata from the source context below.
+DEFAULT_FINAL_PROMPT_TEMPLATE = """Write GitHub PR metadata.
 
-Return this exact plain-text shape:
+Output:
 {{title_shape}}BODY:
 ## Summary
-- 2-4 one-line bullets
+- 2-4 bullets
 
-Important:
-- Return plain Markdown text.
-- Follow the output shape exactly.
-- After BODY:, write the full PR description Markdown.
-- Every section heading must be level 2 Markdown: `## Heading`.
-- Use only these sections, in this order when useful:
-  Summary, Key Changes, Significant Files, Validation, Risk, Reviewer Notes, Deep Dive.
-- Include sections only when they have real content.
-- Keep Summary to 2-4 bullets, one line each.
-- All section content must be Markdown bullets.
-- Write in past tense. Focus on implemented changes.
-- Use concrete content instead of filler like "None", "N/A", "Unknown", "Pending", or "TBD".
-- Keep each fact in the most relevant section.
-- Use simple flat bullets.
+After BODY:, write Markdown with level 2 headings and flat bullets.
+Use useful sections from:
+Summary, Key Changes, Significant Files, Validation, Risk, Reviewer Notes, Deep Dive.
+Write past tense. Keep concrete facts. Omit empty sections.
 {{title_rules}}
 
-Input data for writing the PR body:
-
-Commit messages from this branch:
+Commits:
 {{commits}}
 
-Changed files summary from git diff stat:
+Diff stat:
 {{stat}}
 
-Grouped summaries from the earlier summary step:
+Area summaries:
 {{area_summaries}}
 """
