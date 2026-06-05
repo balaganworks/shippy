@@ -8,8 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shippy.github import GitHubClient, PullRequest
-from shippy.ollama import OllamaClient, OllamaOptions
+from shippy.github import GitHubClient, GitHubContext, PullRequest
+from shippy.log import SessionLogger
+from shippy.ollama import GenerateResult, OllamaClient, OllamaOptions
 from shippy.review.constants import (
     AI_REVIEW_HEADING,
     COMMENT_MARKER,
@@ -58,6 +59,7 @@ def review_pull_request(
 ) -> None:
     github = GitHubClient(repo_root)
     ollama = OllamaClient(config.api_base, config.model)
+    logger = SessionLogger(repo_root, "review", config.debug.log_dir, config.debug.verbose)
     ollama.assert_model_available()
 
     pr = github.pull_request(pr_url)
@@ -66,38 +68,97 @@ def review_pull_request(
     comment_id = github.upsert_comment(context, pending_body(), comment_id)
 
     try:
-        say("🧭 Collecting PR review context...")
-        review_context = collect_review_context(repo_root, config)
-        say(context_ready_message(review_context, "review"))
-        for message in truncation_messages(review_context):
-            say(message)
-        area_reviews = review_groups(ollama, review_context, pr, config)
-        say(f"📝 Asking {config.model} for final markdown review...")
-        result = ollama.generate_with_stats(
-            prompt=build_review_prompt(
-                review_context,
-                pr,
-                prompt_template=config.final_prompt,
-                extra_instructions=config.final_extra_instructions,
-                area_reviews="\n\n".join(area_reviews),
-            ),
-            options=OllamaOptions(
-                num_ctx=config.num_ctx,
-                num_predict=config.num_predict,
-                temperature=config.temperature,
-                timeout=config.timeout,
-            ),
-        )
-        usage = result.usage_text()
-        if usage:
-            say(f"📊 Final review tokens: {usage}")
-        github.upsert_comment(context, normalize_review(result.text), comment_id)
+        review = generate_review(repo_root, ollama, pr, config, logger)
     except Exception as error:
-        body = failure_body(f"{type(error).__name__}: {error}")
-        github.upsert_comment(context, body, comment_id)
-        return
+        handle_review_error(github, context, comment_id, logger, error)
+        raise
 
+    github.upsert_comment(context, normalize_review(review), comment_id)
     say("✅ Updated PR review comment")
+
+
+def generate_review(
+    repo_root: Path,
+    ollama: OllamaClient,
+    pr: PullRequest,
+    config: ReviewConfig,
+    logger: SessionLogger,
+) -> str:
+    review_context = prepare_review_context(repo_root, pr, config, logger)
+    area_reviews = review_groups(ollama, review_context, pr, config, logger)
+    result = final_review(ollama, review_context, pr, area_reviews, config, logger)
+    return result.text
+
+
+def prepare_review_context(
+    repo_root: Path,
+    pr: PullRequest,
+    config: ReviewConfig,
+    logger: SessionLogger,
+) -> ReviewContext:
+    say("🧭 Collecting PR review context...")
+    context = collect_review_context(repo_root, config)
+    say(context_ready_message(context, "review"))
+    for message in truncation_messages(context):
+        say(message)
+    logger.log(
+        "review_context",
+        pr_url=pr.url,
+        pr_title=pr.title,
+        branch=context.branch,
+        base=context.base,
+        groups=[group_log(group) for group in context.groups],
+    )
+    return context
+
+
+def final_review(
+    ollama: OllamaClient,
+    context: ReviewContext,
+    pr: PullRequest,
+    area_reviews: list[str],
+    config: ReviewConfig,
+    logger: SessionLogger,
+) -> GenerateResult:
+    say(f"📝 Asking {config.model} for final markdown review...")
+    prompt = build_review_prompt(
+        context,
+        pr,
+        prompt_template=config.final_prompt,
+        extra_instructions=config.final_extra_instructions,
+        area_reviews="\n\n".join(area_reviews),
+    )
+    options = OllamaOptions(
+        num_ctx=config.num_ctx,
+        num_predict=config.num_predict,
+        temperature=config.temperature,
+        timeout=config.timeout,
+    )
+    logger.request("review_final_request", prompt, model=config.model, options=options)
+    result = ollama.generate_with_stats(prompt=prompt, options=options)
+    logger.response(
+        "review_final_response",
+        result.text,
+        prompt_tokens=result.prompt_tokens,
+        output_tokens=result.output_tokens,
+    )
+    usage = result.usage_text()
+    if usage:
+        say(f"📊 Final review tokens: {usage}")
+    return result
+
+
+def handle_review_error(
+    github: GitHubClient,
+    context: GitHubContext,
+    comment_id: str,
+    logger: SessionLogger,
+    error: Exception,
+) -> None:
+    message = f"{type(error).__name__}: {error}"
+    logger.log("review_error", error=message)
+    say(f"❌ Review failed: {message}")
+    github.upsert_comment(context, failure_body(message), comment_id)
 
 
 def collect_review_context(repo_root: Path, config: ReviewConfig) -> ReviewContext:
@@ -129,6 +190,7 @@ def review_groups(
     context: ReviewContext,
     pr: PullRequest,
     config: ReviewConfig,
+    logger: SessionLogger | None = None,
 ) -> list[str]:
     if len(context.groups) == 1:
         say(single_group_message("review"))
@@ -137,21 +199,44 @@ def review_groups(
     say(f"🧩 Reviewing {len(context.groups)} groups with {config.workers} parallel workers...")
 
     def review(group: ReviewGroup) -> str:
-        result = ollama.generate_with_stats(
-            build_review_group_prompt(
-                context,
-                group,
-                pr,
-                config.split_group_prompt,
-                config.split_group_extra_instructions,
-            ),
-            OllamaOptions(
-                num_ctx=config.num_ctx,
-                num_predict=config.group_tokens,
-                temperature=config.temperature,
-                timeout=config.timeout,
-            ),
+        prompt = build_review_group_prompt(
+            context,
+            group,
+            pr,
+            config.split_group_prompt,
+            config.split_group_extra_instructions,
         )
+        options = OllamaOptions(
+            num_ctx=config.num_ctx,
+            num_predict=config.group_tokens,
+            temperature=config.temperature,
+            timeout=config.timeout,
+        )
+        if logger:
+            logger.request(
+                "review_group_request",
+                prompt,
+                group=group_log(group),
+                options=options,
+            )
+        try:
+            result = ollama.generate_with_stats(prompt, options)
+        except Exception as error:
+            if logger:
+                logger.log(
+                    "review_group_error",
+                    group=group.name,
+                    error=f"{type(error).__name__}: {error}",
+                )
+            raise
+        if logger:
+            logger.response(
+                "review_group_response",
+                result.text,
+                group=group.name,
+                prompt_tokens=result.prompt_tokens,
+                output_tokens=result.output_tokens,
+            )
         usage = result.usage_text()
         if usage:
             say(f"📊 Review group {group.name}: {usage}")
@@ -160,6 +245,16 @@ def review_groups(
     reviews = run_workers(context.groups, config.workers, review)
     reviews.sort()
     return reviews
+
+
+def group_log(group: ReviewGroup | WorkGroup) -> dict[str, object]:
+    return {
+        "name": group.name,
+        "paths": group.paths,
+        "trimmed": group.trimmed,
+        "diff_chars": len(group.diff),
+        "truncations": group.truncations,
+    }
 
 
 def build_review_group_prompt(

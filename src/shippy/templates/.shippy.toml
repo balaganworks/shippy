@@ -61,6 +61,15 @@ update = true
 enforce_prefix = true
 prefixes = ["feat:", "task:", "fix:", "hotfix:", "chore:", "docs:", "refactor:"]
 
+[debug]
+# Optional text session logs for prompt debugging. Relative paths resolve from repo root.
+# Each run writes logs/shippy_YYYYMMDD_HHMMSS_summary.log or shippy_..._review.log.
+# Shippy keeps the last 10 logs per action. Empty disables file logs.
+log_dir = ""
+
+# Also print session log entries to stdout. CLI --verbose forces this on.
+verbose = false
+
 [prompts]
 # Optional. Leave empty to use Shippy defaults.
 # Setting a value replaces only that prompt.

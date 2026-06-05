@@ -18,6 +18,12 @@ DEFAULT_WORKERS = 4
 
 
 @dataclass(frozen=True)
+class DebugConfig:
+    log_dir: str
+    verbose: bool
+
+
+@dataclass(frozen=True)
 class ReviewConfig:
     model: str
     api_base: str
@@ -34,6 +40,7 @@ class ReviewConfig:
     final_prompt: str
     split_group_extra_instructions: str
     final_extra_instructions: str
+    debug: DebugConfig = DebugConfig("logs", False)
 
     @property
     def prompt(self) -> str:
@@ -69,6 +76,7 @@ class SummaryConfig:
     final_prompt: str
     split_group_extra_instructions: str
     final_extra_instructions: str
+    debug: DebugConfig = DebugConfig("logs", False)
 
     @property
     def group_prompt(self) -> str:
@@ -130,6 +138,7 @@ def load_review_config(
                 _extra_instruction_value(raw, "review_split_group", "review_group")
             ),
             final_extra_instructions=str(_extra_instruction_value(raw, "review_final", "review")),
+            debug=_debug_config(raw),
         )
     except KeyError as error:
         raise ConfigError(f"missing config key: {error}") from error
@@ -182,6 +191,7 @@ def load_summary_config(
                 _extra_instruction_value(raw, "summary_split_group", "summary_group")
             ),
             final_extra_instructions=str(extra_instructions.get("summary_final") or ""),
+            debug=_debug_config(raw),
         )
     except KeyError as error:
         raise ConfigError(f"missing config key: {error}") from error
@@ -244,4 +254,14 @@ def _title_config(raw: dict[str, Any]) -> TitleConfig:
         update=bool(title.get("update", True)),
         enforce_prefix=bool(title.get("enforce_prefix", True)),
         prefixes=[str(prefix) for prefix in prefixes],
+    )
+
+
+def _debug_config(raw: dict[str, Any]) -> DebugConfig:
+    debug = raw.get("debug", {})
+    if not isinstance(debug, dict):
+        raise ConfigError("config key 'debug' must be a mapping")
+    return DebugConfig(
+        log_dir=str(debug.get("log_dir", "logs") or ""),
+        verbose=bool(debug.get("verbose", False)),
     )
